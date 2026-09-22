@@ -394,3 +394,162 @@ func TestMigrationIdempotent(t *testing.T) {
 	}
 	db.Close()
 }
+
+// TestNativeRowsDefaultToSourceNative pins the default: any row inserted
+// through the normal `focusflow add` path (no explicit `source` column)
+// is 'native', never 'flow-mirror'. That default is what lets
+// UpsertMirroredProject/UpsertMirroredTask tell a real collision apart
+// from a prior mirror run.
+func TestNativeRowsDefaultToSourceNative(t *testing.T) {
+	db := openTempDB(t)
+	insertProject(t, db, "p", "P", "/tmp/p", "medium")
+	insertTask(t, db, "t", "T", "backlog", "medium", "/tmp/t", nil)
+
+	p, err := GetProject(db, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Source != "native" {
+		t.Errorf("project.Source = %q, want native", p.Source)
+	}
+	tk, err := GetTask(db, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Source != "native" {
+		t.Errorf("task.Source = %q, want native", tk.Source)
+	}
+}
+
+// TestUpsertMirroredProjectInsertsThenRefreshes pins the create-then-
+// refresh contract in isolation from the app-layer mirror orchestration
+// (see internal/app/mirror_test.go for the full session-start path).
+func TestUpsertMirroredProjectInsertsThenRefreshes(t *testing.T) {
+	db := openTempDB(t)
+
+	applied, err := UpsertMirroredProject(db, "mp", "Mirrored Project", "active", "medium", "/tmp/mp")
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if !applied {
+		t.Fatal("expected applied=true on first insert")
+	}
+
+	applied, err = UpsertMirroredProject(db, "mp", "Renamed", "done", "high", "/tmp/mp2")
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if !applied {
+		t.Fatal("expected applied=true on refresh of a mirror-owned row")
+	}
+
+	p, err := GetProject(db, "mp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "Renamed" || p.Status != "done" || p.Priority != "high" || p.WorkDir != "/tmp/mp2" {
+		t.Errorf("refresh did not apply: %+v", p)
+	}
+	if p.Source != "flow-mirror" {
+		t.Errorf("Source = %q, want flow-mirror", p.Source)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM projects WHERE slug = 'mp'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 row, got %d", count)
+	}
+}
+
+// TestUpsertMirroredProjectSkipsNativeCollision pins the guard: a native
+// row is left completely untouched and reports applied=false.
+func TestUpsertMirroredProjectSkipsNativeCollision(t *testing.T) {
+	db := openTempDB(t)
+	insertProject(t, db, "shared", "Native Name", "/native/dir", "high")
+
+	applied, err := UpsertMirroredProject(db, "shared", "Flow Name", "done", "low", "/flow/dir")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if applied {
+		t.Error("expected applied=false against a native row")
+	}
+
+	p, err := GetProject(db, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "Native Name" || p.WorkDir != "/native/dir" || p.Source != "native" {
+		t.Errorf("native project was modified: %+v", p)
+	}
+}
+
+// TestUpsertMirroredTaskInsertsThenRefreshes mirrors
+// TestUpsertMirroredProjectInsertsThenRefreshes for the tasks table,
+// including the floating-task (empty projectSlug) path.
+func TestUpsertMirroredTaskInsertsThenRefreshes(t *testing.T) {
+	db := openTempDB(t)
+
+	applied, err := UpsertMirroredTask(db, "mt", "Mirrored Task", "", "backlog", "low", "/tmp/mt")
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if !applied {
+		t.Fatal("expected applied=true on first insert")
+	}
+
+	applied, err = UpsertMirroredTask(db, "mt", "Renamed Task", "", "in-progress", "high", "/tmp/mt2")
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if !applied {
+		t.Fatal("expected applied=true on refresh of a mirror-owned row")
+	}
+
+	tk, err := GetTask(db, "mt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Name != "Renamed Task" || tk.Status != "in-progress" || tk.Priority != "high" || tk.WorkDir != "/tmp/mt2" {
+		t.Errorf("refresh did not apply: %+v", tk)
+	}
+	if tk.Source != "flow-mirror" {
+		t.Errorf("Source = %q, want flow-mirror", tk.Source)
+	}
+	if tk.ProjectSlug.Valid {
+		t.Errorf("expected floating task, got project_slug=%+v", tk.ProjectSlug)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE slug = 'mt'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 row, got %d", count)
+	}
+}
+
+// TestUpsertMirroredTaskSkipsNativeCollision is the task-table equivalent
+// of TestUpsertMirroredProjectSkipsNativeCollision.
+func TestUpsertMirroredTaskSkipsNativeCollision(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "shared-task", "Native Task", "in-progress", "high", "/native/dir", nil)
+
+	applied, err := UpsertMirroredTask(db, "shared-task", "Flow Task", "", "done", "low", "/flow/dir")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if applied {
+		t.Error("expected applied=false against a native row")
+	}
+
+	tk, err := GetTask(db, "shared-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Name != "Native Task" || tk.Status != "in-progress" || tk.Source != "native" {
+		t.Errorf("native task was modified: %+v", tk)
+	}
+}

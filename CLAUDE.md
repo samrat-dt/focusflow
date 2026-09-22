@@ -42,6 +42,7 @@ focusflow/
 │   │   ├── hook.go                  # focusflow hook session-start
 │   │   ├── init.go                  # focusflow init, flowRoot(), kbSeeds()
 │   │   ├── list.go                  # focusflow list tasks|projects
+│   │   ├── mirror.go                # flow -> focusflow session-start mirror (read-only, one-way)
 │   │   ├── priority.go              # focusflow priority
 │   │   ├── show.go                  # focusflow show task|project
 │   │   ├── skill.go                 # focusflow skill install|uninstall|update
@@ -56,8 +57,11 @@ focusflow/
 │   ├── flowdb/                      # SQLite data layer
 │   │   ├── db.go                    # schema, models, CRUD queries
 │   │   └── db_test.go
-│   └── iterm/                       # iTerm2 tab spawning
-│       └── iterm.go
+│   ├── iterm/                       # iTerm2 tab spawning
+│   │   └── iterm.go
+│   └── realflow/                    # read-only reader for real flow's ~/.flow/flow.db
+│       ├── reader.go                # LookupBySessionID — mode=ro, never writes
+│       └── reader_test.go
 ├── Makefile
 ├── README.md
 ├── CLAUDE.md
@@ -71,6 +75,7 @@ focusflow/
 - **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `iterm`.
 - **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
 - **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` var for test mocking.
+- **`internal/realflow`** — read-only reader for real flow's `~/.flow/flow.db` (honors `$FLOW_ROOT`). Every connection is opened `mode=ro`; nothing in this package ever writes. Used only by `internal/app/mirror.go`.
 
 ## Conventions
 
@@ -100,3 +105,4 @@ focusflow/
 - `hookCommand` in `internal/app/skill.go` is the exact string matched in `~/.claude/settings.json`. Changing it orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.
+- `mirror.go`'s `mirrorFromFlow` runs on every `focusflow hook session-start`, regardless of `$FOCUSFLOW_TASK`. It reads `$FLOW_ROOT` (or `~/.flow`) — any test that exercises the hook path must set `FLOW_ROOT` to a throwaway dir (and clear `CLAUDE_CODE_SESSION_ID`/`CODEX_THREAD_ID`) or it will read/write real state on a dev machine. See `isolateHookEnv` / `mirrorTestEnv` in `internal/app/*_test.go`. Rows it writes are tagged `source='flow-mirror'` in both `projects` and `tasks`; a `source='native'` row is never touched — see `flowdb.UpsertMirroredProject`/`UpsertMirroredTask`.

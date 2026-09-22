@@ -191,6 +191,9 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	}
 	fmt.Printf("project:       %s\n", projName)
 	fmt.Printf("status:        %s\n", t.Status)
+	if t.Source == "flow-mirror" {
+		fmt.Printf("mirror:        yes — read-only reflection of the real flow task of the same slug\n")
+	}
 
 	// Staleness marker for in-progress tasks.
 	if t.Status == "in-progress" && !t.ArchivedAt.Valid {
@@ -313,6 +316,9 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 	fmt.Printf("slug:        %s%s\n", p.Slug, archivedMarker)
 	fmt.Printf("name:        %s\n", p.Name)
 	fmt.Printf("status:      %s\n", p.Status)
+	if p.Source == "flow-mirror" {
+		fmt.Printf("mirror:      yes — read-only reflection of the real flow project of the same slug\n")
+	}
 	fmt.Printf("priority:    %s\n", p.Priority)
 
 	wdLine := p.WorkDir

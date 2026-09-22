@@ -47,6 +47,13 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 
+	// Best-effort, one-way flow→focusflow mirror. Runs on EVERY session
+	// start regardless of $FOCUSFLOW_TASK — a session can be bound in real
+	// flow (and therefore mirror-eligible) whether or not focusflow itself
+	// spawned it. See mirror.go for the full contract: never blocks, never
+	// writes to real flow, never touches a focusflow-native row.
+	mirrorFromFlow(currentHarnessSessionID())
+
 	slug := os.Getenv("FOCUSFLOW_TASK")
 	if slug == "" {
 		return emitAmbientSkillHint()

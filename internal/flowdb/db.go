@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS projects (
     status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','done')),
     priority      TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
     work_dir      TEXT NOT NULL,
+    source        TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','flow-mirror')),
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     archived_at   TEXT
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     playbook_slug         TEXT REFERENCES playbooks(slug),
     priority              TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
     work_dir              TEXT NOT NULL,
+    source                TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','flow-mirror')),
     waiting_on            TEXT,
     due_date              TEXT,
     status_changed_at     TEXT,
@@ -92,6 +94,7 @@ type Project struct {
 	Status     string
 	Priority   string
 	WorkDir    string
+	Source     string // 'native' | 'flow-mirror'
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
@@ -107,6 +110,7 @@ type Task struct {
 	PlaybookSlug       sql.NullString // set when Kind='playbook_run'
 	Priority           string
 	WorkDir            string
+	Source             string // 'native' | 'flow-mirror'
 	WaitingOn          sql.NullString
 	DueDate            sql.NullString
 	StatusChangedAt    sql.NullString
@@ -238,6 +242,30 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	// source marks rows mirrored in read-only from real flow (vs
+	// user-created directly in focusflow). SQLite doesn't allow a CHECK
+	// constraint on ADD COLUMN (see the kind comment above); application
+	// code (UpsertMirroredProject / UpsertMirroredTask) is the only writer
+	// of 'flow-mirror' and validates it.
+	has, err = columnExists(db, "projects", "source")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT 'native'`); err != nil {
+			return fmt.Errorf("add projects.source: %w", err)
+		}
+	}
+	has, err = columnExists(db, "tasks", "source")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'native'`); err != nil {
+			return fmt.Errorf("add tasks.source: %w", err)
+		}
+	}
+
 	// Indexes that depend on columns added above. Safe to run after every
 	// migration pass — CREATE INDEX IF NOT EXISTS is idempotent, and by
 	// this point all referenced columns exist.
@@ -270,11 +298,11 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 
 // ---------- project queries ----------
 
-const ProjectCols = "slug, name, status, priority, work_dir, created_at, updated_at, archived_at"
+const ProjectCols = "slug, name, status, priority, work_dir, source, created_at, updated_at, archived_at"
 
 func ScanProject(row interface{ Scan(dest ...any) error }) (*Project, error) {
 	var p Project
-	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
+	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.Source, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -319,13 +347,13 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, source, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(
 		&t.Slug, &t.Name, &t.ProjectSlug, &t.Status, &t.Kind, &t.PlaybookSlug,
-		&t.Priority, &t.WorkDir,
+		&t.Priority, &t.WorkDir, &t.Source,
 		&t.WaitingOn, &t.DueDate, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
@@ -536,4 +564,71 @@ func UpsertPlaybook(db *sql.DB, pb *Playbook) error {
 		return fmt.Errorf("upsert playbook %s: %w", pb.Slug, err)
 	}
 	return nil
+}
+
+// ---------- flow-mirror queries ----------
+//
+// One-way, read-only-sourced upserts for rows mirrored in from real
+// flow's flow.db (see internal/realflow). Both are guarded by
+// `WHERE <table>.source = 'flow-mirror'` on the DO UPDATE clause: if a
+// row with the same slug already exists and its source is 'native' (i.e.
+// created directly in focusflow, not by a prior mirror run), the WHERE
+// evaluates false, SQLite silently skips the update, and the native row
+// is left completely untouched — no error, no partial write. The
+// returned bool tells the caller whether the mirror was actually applied
+// (true) or skipped due to a native collision (false), so callers can
+// decide whether to also touch on-disk brief/updates files.
+
+// UpsertMirroredProject inserts a project mirrored from real flow, or
+// refreshes name/status/priority/work_dir if a mirror-owned row with this
+// slug already exists.
+func UpsertMirroredProject(db *sql.DB, slug, name, status, priority, workDir string) (applied bool, err error) {
+	now := NowISO()
+	res, err := db.Exec(`
+		INSERT INTO projects (slug, name, status, priority, work_dir, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'flow-mirror', ?, ?)
+		ON CONFLICT(slug) DO UPDATE SET
+			name       = excluded.name,
+			status     = excluded.status,
+			priority   = excluded.priority,
+			work_dir   = excluded.work_dir,
+			updated_at = excluded.updated_at
+		WHERE projects.source = 'flow-mirror'
+	`, slug, name, status, priority, workDir, now, now)
+	if err != nil {
+		return false, fmt.Errorf("upsert mirrored project %s: %w", slug, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// UpsertMirroredTask is the task-table equivalent of
+// UpsertMirroredProject. projectSlug may be empty for a floating task.
+// session_id and its siblings are deliberately never written here — a
+// mirrored task's session lifecycle belongs to real flow, not focusflow.
+func UpsertMirroredTask(db *sql.DB, slug, name, projectSlug, status, priority, workDir string) (applied bool, err error) {
+	now := NowISO()
+	res, err := db.Exec(`
+		INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, source, status_changed_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'flow-mirror', ?, ?, ?)
+		ON CONFLICT(slug) DO UPDATE SET
+			name         = excluded.name,
+			project_slug = excluded.project_slug,
+			status       = excluded.status,
+			priority     = excluded.priority,
+			work_dir     = excluded.work_dir,
+			updated_at   = excluded.updated_at
+		WHERE tasks.source = 'flow-mirror'
+	`, slug, name, NullIfEmpty(projectSlug), status, priority, workDir, now, now, now)
+	if err != nil {
+		return false, fmt.Errorf("upsert mirrored task %s: %w", slug, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
 }

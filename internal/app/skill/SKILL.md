@@ -42,6 +42,19 @@ edits they imply. You never edit `focusflow.db` directly. You never solve
 problems during task intake — you interview, then write what the user
 said.
 
+**Mirrored-from-flow rows.** The user also runs a separate, older tool
+called `flow` (their daily-driver system) on the same machine. On every
+session start, focusflow's SessionStart hook does a best-effort,
+read-only, one-way sync: if this session is bound to a task in real
+flow's own database, that task (and its project, if any) gets mirrored
+into focusflow's database too — so it shows up in `focusflow show` /
+`focusflow list` without the user re-entering it. Mirrored rows are
+marked `mirror: yes` in `show` output and `[mirror]` in `list` output.
+Real flow is never written to, and a focusflow-native task/project is
+never overwritten by the mirror even if its slug collides with a
+mirrored one. The mirror can go briefly stale between real-flow changes
+and the next session start — that's expected, not a bug to chase.
+
 ## 2. The model
 
 - **Projects** group related tasks. Every project has a name, a slug, a

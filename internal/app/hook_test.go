@@ -2,9 +2,28 @@ package app
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// isolateHookEnv points every path cmdHookSessionStart's new mirror side
+// effect (mirrorFromFlow) could touch at a throwaway temp tree, and clears
+// the harness session-id env vars it reads. Without this, running these
+// tests under an actual Claude Code / Codex session (as happens during
+// interactive development) would have mirrorFromFlow read the real
+// ~/.flow/flow.db and write into the real ~/.focusflow/focusflow.db —
+// exactly the isolation CLAUDE.md requires ("nothing touches real
+// ~/.focusflow/ or ~/.claude/").
+func isolateHookEnv(t *testing.T) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, ".focusflow"))
+	t.Setenv("FLOW_ROOT", filepath.Join(tmp, ".flow-does-not-exist"))
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+}
 
 // TestHookSessionStartNoFlowTaskEmitsAmbientHint pins the contract for
 // ad-hoc sessions (e.g. bare `claude` with no FOCUSFLOW_TASK): the hook must
@@ -12,6 +31,7 @@ import (
 // not the hook — owns the substantive-work detection logic and offers
 // the three-choice prompt; the hook is only the one-shot trigger.
 func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
+	isolateHookEnv(t)
 	t.Setenv("FOCUSFLOW_TASK", "")
 	out := captureStdout(t, func() {
 		if rc := cmdHookSessionStart(nil); rc != 0 {
@@ -51,6 +71,7 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 // invoke the focusflow skill via the Skill tool as its first action, and
 // mentions the task slug so the agent has something anchor-visible.
 func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
+	isolateHookEnv(t)
 	t.Setenv("FOCUSFLOW_TASK", "some-slug")
 	out := captureStdout(t, func() {
 		if rc := cmdHookSessionStart(nil); rc != 0 {

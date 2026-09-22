@@ -111,6 +111,7 @@ func listTasksCmd(args []string) int {
 		waiting  string
 		archived bool
 		done     bool
+		mirror   bool
 	}
 	var rows []row
 	maxIdent := 0
@@ -128,6 +129,7 @@ func listTasksCmd(args []string) int {
 			pri:      priorityShort(t.Priority),
 			archived: t.ArchivedAt.Valid,
 			done:     t.Status == "done",
+			mirror:   t.Source == "flow-mirror",
 		}
 		if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
 			r.project = "(" + t.ProjectSlug.String + ")"
@@ -206,6 +208,9 @@ func listTasksCmd(args []string) int {
 		if r.waiting != "" {
 			sb.WriteString("  ")
 			sb.WriteString(r.waiting)
+		}
+		if r.mirror {
+			sb.WriteString("  [mirror]")
 		}
 		if r.archived {
 			sb.WriteString("  (archived)")
@@ -322,12 +327,16 @@ func listProjectsCmd(args []string) int {
 		if len(segs) > 0 {
 			breakdown = "(" + strings.Join(segs, ", ") + ")"
 		}
+		mirror := ""
+		if p.Source == "flow-mirror" {
+			mirror = "  [mirror]"
+		}
 		arch := ""
 		if p.ArchivedAt.Valid {
 			arch = "  (archived)"
 		}
-		fmt.Printf("  %-6s %-*s   %-7s %s %s%s\n",
-			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, arch)
+		fmt.Printf("  %-6s %-*s   %-7s %s %s%s%s\n",
+			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, mirror, arch)
 	}
 	return 0
 }
