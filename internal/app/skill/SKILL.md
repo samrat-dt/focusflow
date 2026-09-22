@@ -155,11 +155,14 @@ Setup
 Create
   focusflow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   focusflow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
-                           [--priority high|medium|low]
+                           [--priority high|medium|low] [--due <date>] [--assignee <name>]
+                           [--tag <t> ...]
   focusflow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
   focusflow do               <ref> [--fresh] [--dangerously-skip-permissions]
+                             [--harness claude|codex] [--with "<instruction>" | --with-file <path>]
+  focusflow do <ref> --here  [--force]         (bind THIS harness session to the task — no new tab)
   focusflow done             <ref>
 
 Playbook runs

@@ -8,6 +8,7 @@ import (
 	"focusflow/internal/iterm"
 	"net/url"
 	"os"
+	"strings"
 )
 
 // openConcurrentDB opens focusflow.db with a generous busy_timeout so that two
@@ -55,8 +56,32 @@ func cmdDo(args []string) int {
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	here := fs.Bool("here", false, "bind the current harness session to this task instead of spawning a tab")
+	force := fs.Bool("force", false, "override the live-session guard")
+	harness := fs.String("harness", "", "claude|codex (first-session choice only)")
+	with := fs.String("with", "", "one-off instruction to include in the session's first/next message")
+	withFile := fs.String("with-file", "", "path to a file whose contents are used as --with")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
+	}
+	if *with != "" && *withFile != "" {
+		fmt.Fprintln(os.Stderr, "error: --with and --with-file are mutually exclusive")
+		return 2
+	}
+	if *harness != "" && *harness != "claude" && *harness != "codex" {
+		fmt.Fprintf(os.Stderr, "error: --harness must be claude or codex, got %q\n", *harness)
+		return 2
+	}
+	var withText string
+	if *with != "" {
+		withText = *with
+	} else if *withFile != "" {
+		b, err := os.ReadFile(*withFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --with-file: %v\n", err)
+			return 1
+		}
+		withText = string(b)
 	}
 
 	var extraClaudeArgs []string
@@ -79,6 +104,10 @@ func cmdDo(args []string) int {
 	task, rc := findTask(db, query)
 	if rc != 0 {
 		return rc
+	}
+
+	if *here {
+		return doHere(db, task, *force)
 	}
 
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
@@ -136,12 +165,16 @@ func cmdDo(args []string) int {
 
 	now := flowdb.NowISO()
 	if needsBootstrap {
+		resolvedHarness := *harness
+		if resolvedHarness == "" {
+			resolvedHarness = "claude"
+		}
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, updated_at=?
+			 session_id=?, session_started=?, harness=?, updated_at=?
 			 WHERE slug=? AND status IN ('backlog','in-progress')`,
-			now, sessionID, now, now, task.Slug,
+			now, sessionID, now, resolvedHarness, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
 			return 1
@@ -223,11 +256,17 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		if withText != "" {
+			prompt = prompt + "\n\n" + withText
+		}
 		command = fmt.Sprintf("claude --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
 		// used to write its existing jsonl.
 		command = "claude --resume " + sessionID
+		if withText != "" {
+			command += " " + iterm.ShellQuote(withText)
+		}
 	}
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
@@ -390,4 +429,52 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 		return nil, 1
 	}
 	return t, 0
+}
+
+// doHere binds the current process's harness session id to task without
+// spawning a tab. The env var checked mirrors flow's own detection order
+// (see currentHarnessSessionID in mirror.go / §10 of the flow skill):
+// Claude Code first, then Codex.
+func doHere(db *sql.DB, task *flowdb.Task, force bool) int {
+	sessionID := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	harness := "claude"
+	if sessionID == "" {
+		sessionID = os.Getenv("CODEX_THREAD_ID")
+		harness = "codex"
+	}
+	if sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --here requires a harness session id in the environment (CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID)")
+		return 1
+	}
+
+	now := flowdb.NowISO()
+	query := `UPDATE tasks SET status='in-progress',
+		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+		 session_id=?, session_started=?, harness=?, updated_at=?
+		 WHERE slug=? AND status IN ('backlog','in-progress')`
+	args := []any{now, sessionID, now, harness, now, task.Slug}
+	if !force {
+		query += ` AND (session_id IS NULL OR session_id = ?)`
+		args = append(args, sessionID)
+	}
+	res, err := db.Exec(query, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			fmt.Fprintln(os.Stderr, "error: this session is already bound to another task; a session can only be bound to one task")
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)
+		return 1
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if n == 0 {
+		fmt.Fprintf(os.Stderr, "error: task %q could not be bound (already done, or already bound to a different session — pass --force to override)\n", task.Slug)
+		return 1
+	}
+	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sessionID)
+	return 0
 }

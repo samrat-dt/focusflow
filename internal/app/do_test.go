@@ -47,6 +47,48 @@ func seedTask(t *testing.T, slug string) {
 // a fresh task gets a UUID written to tasks.session_id and spawns
 // `claude --session-id <uuid> "<prompt>"` so the jsonl file claude creates
 // lands at the deterministic path keyed on that UUID.
+func TestDo_Here_BindsCurrentSessionWithoutSpawningTab(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bindable")
+	spawnCount, _ := stubITerm(t)
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "44444444-4444-4444-8444-444444444444")
+	rc := cmdDo([]string{"bindable", "--here"})
+	if rc != 0 {
+		t.Fatalf("do --here rc=%d", rc)
+	}
+	if *spawnCount != 0 {
+		t.Errorf("do --here must not spawn an iTerm tab, got %d spawns", *spawnCount)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "bindable")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != "44444444-4444-4444-8444-444444444444" {
+		t.Errorf("SessionID = %+v, want the CLAUDE_CODE_SESSION_ID value", task.SessionID)
+	}
+	if task.Status != "in-progress" {
+		t.Errorf("Status = %q, want in-progress", task.Status)
+	}
+}
+
+func TestDo_Here_RejectsAlreadyBoundTask(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "already-bound")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "55555555-5555-4555-8555-555555555555")
+	if rc := cmdDo([]string{"already-bound", "--here"}); rc != 0 {
+		t.Fatalf("first do --here rc=%d", rc)
+	}
+
+	seedTask(t, "second-task")
+	rc := cmdDo([]string{"second-task", "--here"})
+	if rc == 0 {
+		t.Error("do --here on a second task from the same process should fail (session_id already bound elsewhere)")
+	}
+}
+
 func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "fresh-task")
