@@ -441,7 +441,7 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 		args = append(args, filter.Since)
 	}
 	for _, tag := range filter.Tags {
-		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
+		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE LOWER(tag) = LOWER(?))")
 		args = append(args, tag)
 	}
 	if !filter.IncludeArchived {

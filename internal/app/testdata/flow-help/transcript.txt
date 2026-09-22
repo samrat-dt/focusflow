@@ -1,0 +1,3 @@
+Usage of transcript:
+  -compact
+    	omit tool results and thinking blocks

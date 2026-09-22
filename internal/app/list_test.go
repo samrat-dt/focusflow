@@ -11,6 +11,112 @@ import (
 	"time"
 )
 
+func TestListProjects_FormatTSVAccepted(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "proj-a", "Proj A", filepath.Join(root, "x"), "high")
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"projects", "--format", "tsv"})
+		if rc != 0 {
+			t.Fatalf("list projects --format tsv: rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "proj-a") {
+		t.Errorf("expected proj-a in tsv output, got:\n%s", out)
+	}
+}
+
+func TestListPlaybooks_FormatTSVAccepted(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureShowStdout(t, func() {
+		rc := cmdList([]string{"playbooks", "--format", "tsv"})
+		if rc != 0 {
+			t.Fatalf("list playbooks --format tsv: rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "alpha") {
+		t.Errorf("expected alpha in tsv output, got:\n%s", out)
+	}
+}
+
+func TestListTags_FormatFlags(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "tagged", "Tagged", "backlog", "medium", filepath.Join(root, "x"), nil)
+	if err := flowdb.AddTag(db, "tagged", "urgent"); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"tags", "--format", "json"})
+		if rc != 0 {
+			t.Fatalf("list tags --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput:\n%s", err, out)
+	}
+	if len(rows) != 1 || rows[0]["tag"] != "urgent" {
+		t.Errorf("rows = %v, want one row with tag urgent", rows)
+	}
+
+	tsvOut := captureStdout(t, func() {
+		rc := cmdList([]string{"tags", "--format", "tsv"})
+		if rc != 0 {
+			t.Fatalf("list tags --format tsv: rc=%d", rc)
+		}
+	})
+	if !strings.Contains(tsvOut, "urgent") {
+		t.Errorf("expected urgent in tsv output, got:\n%s", tsvOut)
+	}
+
+	// --no-color/--no-truncate must at least be accepted (surface parity).
+	if rc := cmdList([]string{"tags", "--no-color", "--no-truncate"}); rc != 0 {
+		t.Errorf("list tags --no-color --no-truncate: rc=%d", rc)
+	}
+}
+
+func TestListRuns_FormatFlags(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	insertRunTaskForSlug(t, db, "p--run-1", "p", wd)
+
+	out := captureShowStdout(t, func() {
+		rc := cmdList([]string{"runs", "--format", "json"})
+		if rc != 0 {
+			t.Fatalf("list runs --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput:\n%s", err, out)
+	}
+	if len(rows) != 1 || rows[0]["slug"] != "p--run-1" {
+		t.Errorf("rows = %v, want one row with slug p--run-1", rows)
+	}
+
+	tsvOut := captureShowStdout(t, func() {
+		rc := cmdList([]string{"runs", "--format", "tsv"})
+		if rc != 0 {
+			t.Fatalf("list runs --format tsv: rc=%d", rc)
+		}
+	})
+	if !strings.Contains(tsvOut, "p--run-1") {
+		t.Errorf("expected p--run-1 in tsv output, got:\n%s", tsvOut)
+	}
+
+	if rc := cmdList([]string{"runs", "--no-color", "--no-truncate"}); rc != 0 {
+		t.Errorf("list runs --no-color --no-truncate: rc=%d", rc)
+	}
+}
+
 func TestListTasks_TagFilter(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "task-a", "A", "backlog", "medium", filepath.Join(root, "x"), nil)
@@ -384,14 +490,6 @@ func TestListProjects_FormatJSON(t *testing.T) {
 	}
 }
 
-func TestListProjects_FormatRejectsTSV(t *testing.T) {
-	_, _ = showListEditDB(t)
-	rc := cmdList([]string{"projects", "--format", "tsv"})
-	if rc != 2 {
-		t.Errorf("list projects --format tsv: rc=%d, want 2 (unsupported)", rc)
-	}
-}
-
 func TestListProjects_NoTruncateShowsFullLongSlug(t *testing.T) {
 	root, db := showListEditDB(t)
 	longSlug := "a-very-long-project-slug-that-exceeds-forty-characters-easily"
@@ -543,14 +641,6 @@ func TestListPlaybooks_FormatJSON(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0]["slug"] != "alpha" {
 		t.Errorf("rows = %v, want one row with slug alpha", rows)
-	}
-}
-
-func TestListPlaybooks_FormatRejectsTSV(t *testing.T) {
-	setupFlowRoot(t)
-	rc := cmdList([]string{"playbooks", "--format", "tsv"})
-	if rc != 2 {
-		t.Errorf("list playbooks --format tsv: rc=%d, want 2 (unsupported)", rc)
 	}
 }
 

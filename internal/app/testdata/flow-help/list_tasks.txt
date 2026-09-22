@@ -1,0 +1,23 @@
+Usage of list tasks:
+  -format string
+    	output format: table|json|tsv (default "table")
+  -include-archived
+    	include archived tasks
+  -include-done
+    	include done tasks (hidden by default)
+  -kind string
+    	filter by task kind: regular | playbook_run | all (default "regular")
+  -no-color
+    	disable ANSI color even when stdout is a TTY
+  -no-truncate
+    	do not truncate the [waiting: ...] field in table output
+  -priority string
+    	high|medium|low
+  -project string
+    	project slug
+  -since string
+    	today|monday|7d|YYYY-MM-DD
+  -status string
+    	backlog|in-progress|done
+  -tag value
+    	only tasks carrying this tag (case-insensitive; repeatable — tasks must carry ALL given tags)

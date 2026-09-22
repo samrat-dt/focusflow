@@ -238,6 +238,24 @@ func TestRunPlaybook_HereFlagPassesThroughToDo(t *testing.T) {
 	}
 }
 
+func TestRunPlaybook_WithFlagPassesThroughToDo(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Instructed", "--slug", "instructed", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, getScript := stubITerm(t)
+
+	rc := cmdRun([]string{"playbook", "instructed", "--with", "focus on the edge cases"})
+	if rc != 0 {
+		t.Fatalf("run playbook --with rc=%d", rc)
+	}
+	script := getScript()
+	if !strings.Contains(script, "focus on the edge cases") {
+		t.Errorf("expected --with text in spawn script, got: %q", script)
+	}
+}
+
 func TestCmdRunPlaybookMissing(t *testing.T) {
 	setupFlowRoot(t)
 	stubITerm(t)

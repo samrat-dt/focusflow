@@ -1,0 +1,11 @@
+Usage of list projects:
+  -format string
+    	output format: table|json|tsv (default "table")
+  -include-archived
+    	include archived projects
+  -no-color
+    	disable ANSI color even when stdout is a TTY
+  -no-truncate
+    	do not truncate the [waiting: ...] field in table output
+  -status string
+    	active|done

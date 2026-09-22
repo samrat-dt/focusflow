@@ -677,3 +677,17 @@ func TestListTasks_FilterByTags_ANDSemantics(t *testing.T) {
 		t.Errorf("ListTasks with Tags=[a,b] (AND semantics) = %+v, want only both-tags", tasks)
 	}
 }
+
+func TestListTasks_FilterByTags_CaseInsensitive(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "upper-tagged", "Upper", "backlog", "medium", "/tmp", nil)
+	AddTag(db, "upper-tagged", "Urgent")
+
+	tasks, err := ListTasks(db, TaskFilter{Tags: []string{"urgent"}})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Slug != "upper-tagged" {
+		t.Errorf("ListTasks with Tags=[urgent] should case-insensitively match stored tag 'Urgent', got %+v", tasks)
+	}
+}

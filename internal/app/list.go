@@ -42,10 +42,10 @@ func listTasksCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
-	format := fs.String("format", "table", "table|json|tsv")
+	format := fs.String("format", "table", "output format: table|json|tsv")
 	var tagFilter stringSliceFlag
-	fs.Var(&tagFilter, "tag", "filter to tasks having this tag (repeatable; AND semantics)")
-	noColor := fs.Bool("no-color", false, "disable ANSI color/emoji markers in table output")
+	fs.Var(&tagFilter, "tag", "only tasks carrying this tag (case-insensitive; repeatable — tasks must carry ALL given tags)")
+	noColor := fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
 	noTruncate := fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -392,7 +392,16 @@ func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
 // use (across non-archived tasks) with its usage count.
 func listTagsCmd(args []string) int {
 	fs := flagSet("list tags")
+	format := fs.String("format", "table", "output format: table|json|tsv")
+	_ = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
+	_ = fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *format {
+	case "table", "json", "tsv":
+	default:
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
 	dbPath, err := flowDBPath()
@@ -411,6 +420,12 @@ func listTagsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if *format == "json" {
+		return renderTagsJSON(tags)
+	}
+	if *format == "tsv" {
+		return renderTagsTSV(tags)
+	}
 	if len(tags) == 0 {
 		fmt.Println("(no tags)")
 		return 0
@@ -421,23 +436,49 @@ func listTagsCmd(args []string) int {
 	return 0
 }
 
+// renderTagsJSON prints tags as a JSON array of {tag, count}.
+func renderTagsJSON(tags []flowdb.TagCount) int {
+	type jsonRow struct {
+		Tag   string `json:"tag"`
+		Count int    `json:"count"`
+	}
+	rows := make([]jsonRow, 0, len(tags))
+	for _, tc := range tags {
+		rows = append(rows, jsonRow{Tag: tc.Tag, Count: tc.Count})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// renderTagsTSV prints tags as tab-separated rows.
+func renderTagsTSV(tags []flowdb.TagCount) int {
+	w := os.Stdout
+	fmt.Fprintln(w, strings.Join([]string{"tag", "count"}, "\t"))
+	for _, tc := range tags {
+		fmt.Fprintln(w, fmt.Sprintf("%s\t%d", tc.Tag, tc.Count))
+	}
+	return 0
+}
+
 func listProjectsCmd(args []string) int {
 	fs := flagSet("list projects")
 	status := fs.String("status", "", "active|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
-	format := fs.String("format", "table", "table|json")
-	_ = fs.Bool("no-color", false, "disable color/emoji markers in table output")
+	format := fs.String("format", "table", "output format: table|json|tsv")
+	_ = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
 	noTruncate := fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	switch *format {
-	case "table", "json":
-	case "tsv":
-		fmt.Fprintln(os.Stderr, "error: --format tsv is not supported for list projects")
-		return 2
+	case "table", "json", "tsv":
 	default:
-		fmt.Fprintf(os.Stderr, "error: --format must be table|json, got %q\n", *format)
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
 	filter := flowdb.ProjectFilter{
@@ -463,6 +504,9 @@ func listProjectsCmd(args []string) int {
 	}
 	if *format == "json" {
 		return renderProjectsJSON(projects, db)
+	}
+	if *format == "tsv" {
+		return renderProjectsTSV(projects, db)
 	}
 	if len(projects) == 0 {
 		fmt.Println("(no projects)")
@@ -593,23 +637,39 @@ func renderProjectsJSON(projects []*flowdb.Project, db *sql.DB) int {
 	return 0
 }
 
+// renderProjectsTSV prints projects as tab-separated rows, using the
+// same field set as renderProjectsJSON.
+func renderProjectsTSV(projects []*flowdb.Project, db *sql.DB) int {
+	w := os.Stdout
+	fmt.Fprintln(w, strings.Join([]string{"slug", "name", "status", "priority", "work_dir", "tasks", "archived"}, "\t"))
+	for _, p := range projects {
+		counts, err := projectTaskCounts(db, p.Slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(w, strings.Join([]string{
+			p.Slug, p.Name, p.Status, p.Priority, p.WorkDir,
+			fmt.Sprintf("%d", counts.total), fmt.Sprintf("%t", p.ArchivedAt.Valid),
+		}, "\t"))
+	}
+	return 0
+}
+
 func listPlaybooksCmd(args []string) int {
 	fs := flagSet("list playbooks")
 	project := fs.String("project", "", "filter by project slug")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
-	format := fs.String("format", "table", "table|json")
-	_ = fs.Bool("no-color", false, "disable color/emoji markers in table output")
+	format := fs.String("format", "table", "output format: table|json|tsv")
+	_ = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
 	_ = fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	switch *format {
-	case "table", "json":
-	case "tsv":
-		fmt.Fprintln(os.Stderr, "error: --format tsv is not supported for list playbooks")
-		return 2
+	case "table", "json", "tsv":
 	default:
-		fmt.Fprintf(os.Stderr, "error: --format must be table|json, got %q\n", *format)
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
 
@@ -635,6 +695,9 @@ func listPlaybooksCmd(args []string) int {
 	}
 	if *format == "json" {
 		return renderPlaybooksJSON(pbs)
+	}
+	if *format == "tsv" {
+		return renderPlaybooksTSV(pbs)
 	}
 	if len(pbs) == 0 {
 		fmt.Println("(no playbooks)")
@@ -687,11 +750,37 @@ func renderPlaybooksJSON(pbs []*flowdb.Playbook) int {
 	return 0
 }
 
+// renderPlaybooksTSV prints playbooks as tab-separated rows, using the
+// same field set as renderPlaybooksJSON.
+func renderPlaybooksTSV(pbs []*flowdb.Playbook) int {
+	w := os.Stdout
+	fmt.Fprintln(w, strings.Join([]string{"slug", "name", "project", "work_dir", "archived"}, "\t"))
+	for _, pb := range pbs {
+		project := ""
+		if pb.ProjectSlug.Valid {
+			project = pb.ProjectSlug.String
+		}
+		fmt.Fprintln(w, strings.Join([]string{
+			pb.Slug, pb.Name, project, pb.WorkDir, fmt.Sprintf("%t", pb.ArchivedAt.Valid),
+		}, "\t"))
+	}
+	return 0
+}
+
 func listRunsCmd(args []string) int {
 	fs := flagSet("list runs")
 	status := fs.String("status", "", "backlog|in-progress|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
+	format := fs.String("format", "table", "output format: table|json|tsv")
+	_ = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
+	_ = fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *format {
+	case "table", "json", "tsv":
+	default:
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
 	var playbookSlug string
@@ -721,6 +810,12 @@ func listRunsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if *format == "json" {
+		return renderRunsJSON(tasks)
+	}
+	if *format == "tsv" {
+		return renderRunsTSV(tasks)
+	}
 	if len(tasks) == 0 {
 		fmt.Println("(no runs)")
 		return 0
@@ -735,6 +830,48 @@ func listRunsCmd(args []string) int {
 			pbCol = "(" + tk.PlaybookSlug.String + ")"
 		}
 		fmt.Printf("  [%s] %-50s %s%s\n", statusAbbrev(tk.Status), tk.Slug, pbCol, archived)
+	}
+	return 0
+}
+
+// renderRunsJSON prints playbook runs as a JSON array. Field set is
+// derived from this command's own table output (slug, status, playbook,
+// archived) — no live-flow JSON sample was captured for `list runs`.
+func renderRunsJSON(tasks []*flowdb.Task) int {
+	type jsonRow struct {
+		Slug     string `json:"slug"`
+		Status   string `json:"status"`
+		Playbook string `json:"playbook"`
+		Archived bool   `json:"archived"`
+	}
+	rows := make([]jsonRow, 0, len(tasks))
+	for _, tk := range tasks {
+		playbook := ""
+		if tk.PlaybookSlug.Valid {
+			playbook = tk.PlaybookSlug.String
+		}
+		rows = append(rows, jsonRow{Slug: tk.Slug, Status: tk.Status, Playbook: playbook, Archived: tk.ArchivedAt.Valid})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// renderRunsTSV prints playbook runs as tab-separated rows, using the
+// same field set as renderRunsJSON.
+func renderRunsTSV(tasks []*flowdb.Task) int {
+	w := os.Stdout
+	fmt.Fprintln(w, strings.Join([]string{"slug", "status", "playbook", "archived"}, "\t"))
+	for _, tk := range tasks {
+		playbook := ""
+		if tk.PlaybookSlug.Valid {
+			playbook = tk.PlaybookSlug.String
+		}
+		fmt.Fprintln(w, strings.Join([]string{tk.Slug, tk.Status, playbook, fmt.Sprintf("%t", tk.ArchivedAt.Valid)}, "\t"))
 	}
 	return 0
 }

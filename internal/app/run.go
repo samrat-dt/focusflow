@@ -38,7 +38,13 @@ func cmdRunPlaybook(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
 	here := fs.Bool("here", false, "bind the current harness session to the new run instead of spawning a tab")
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background")
+	with := fs.String("with", "", "one-off instruction to include in the run's first/next message")
+	withFile := fs.String("with-file", "", "path to a file whose contents are used as --with")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if *with != "" && *withFile != "" {
+		fmt.Fprintln(os.Stderr, "error: --with and --with-file are mutually exclusive")
 		return 2
 	}
 
@@ -119,6 +125,12 @@ func cmdRunPlaybook(args []string) int {
 	}
 	if *auto {
 		doArgs = append(doArgs, "--auto")
+	}
+	if *with != "" {
+		doArgs = append(doArgs, "--with", *with)
+	}
+	if *withFile != "" {
+		doArgs = append(doArgs, "--with-file", *withFile)
 	}
 	return cmdDo(doArgs)
 }
