@@ -3,6 +3,7 @@ package app
 import (
 	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,97 @@ func TestDo_Here_RejectsAlreadyBoundTask(t *testing.T) {
 	rc := cmdDo([]string{"second-task", "--here"})
 	if rc == 0 {
 		t.Error("do --here on a second task from the same process should fail (session_id already bound elsewhere)")
+	}
+}
+
+func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "auto-task")
+
+	origExecCommand := execCommand
+	var capturedArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		capturedArgs = append([]string{name}, args...)
+		// Use a real, near-instant command so Start()/Wait() behave like a
+		// real (if trivial) process without depending on `claude` existing
+		// in the test environment.
+		return exec.Command("true")
+	}
+	defer func() { execCommand = origExecCommand }()
+
+	rc := cmdDo([]string{"auto-task", "--auto"})
+	if rc != 0 {
+		t.Fatalf("do --auto rc=%d", rc)
+	}
+	if len(capturedArgs) == 0 || capturedArgs[0] != "claude" {
+		t.Errorf("expected exec of claude, got %v", capturedArgs)
+	}
+	found := false
+	for _, a := range capturedArgs {
+		if a == "--dangerously-skip-permissions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("--auto must imply --dangerously-skip-permissions")
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "auto-task")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !task.AutoRunStatus.Valid || task.AutoRunStatus.String != "running" {
+		t.Errorf("AutoRunStatus = %+v, want running", task.AutoRunStatus)
+	}
+	if !task.AutoRunPID.Valid || task.AutoRunPID.Int64 == 0 {
+		t.Errorf("AutoRunPID = %+v, want a nonzero pid", task.AutoRunPID)
+	}
+}
+
+func TestDo_Auto_CannotCombineWithHere(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "both-flags")
+	rc := cmdDo([]string{"both-flags", "--auto", "--here"})
+	if rc != 2 {
+		t.Errorf("do --auto --here: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
+func TestRefreshAutoRunStatus_DetectsDeadPID(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "will-die")
+
+	db := openFlowDB(t)
+
+	// A pid that is guaranteed not to be running: spawn `true`, wait for
+	// it to exit, then use its now-dead pid.
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start throwaway process: %v", err)
+	}
+	deadPID := cmd.Process.Pid
+	cmd.Wait()
+
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=? WHERE slug='will-die'`,
+		deadPID, now,
+	); err != nil {
+		t.Fatalf("seed running auto_run: %v", err)
+	}
+
+	task, err := flowdb.GetTask(db, "will-die")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if err := refreshAutoRunStatus(db, task); err != nil {
+		t.Fatalf("refreshAutoRunStatus: %v", err)
+	}
+
+	task, _ = flowdb.GetTask(db, "will-die")
+	if task.AutoRunStatus.String != "dead" {
+		t.Errorf("AutoRunStatus = %q, want dead (pid %d is no longer alive)", task.AutoRunStatus.String, deadPID)
 	}
 }
 

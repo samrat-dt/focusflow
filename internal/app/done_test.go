@@ -26,6 +26,36 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	return calls
 }
 
+func TestCmdDone_MarksAutoRunCompleted(t *testing.T) {
+	setupFlowRoot(t)
+	stubClaudeRunner(t, nil)
+	seedTask(t, "auto-done-task")
+
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=1, auto_run_started=? WHERE slug='auto-done-task'`,
+		now,
+	); err != nil {
+		t.Fatalf("seed running auto_run: %v", err)
+	}
+
+	if rc := cmdDone([]string{"auto-done-task"}); rc != 0 {
+		t.Fatalf("done rc=%d", rc)
+	}
+
+	task, err := flowdb.GetTask(db, "auto-done-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.AutoRunStatus.Valid || task.AutoRunStatus.String != "completed" {
+		t.Errorf("AutoRunStatus = %+v, want completed", task.AutoRunStatus)
+	}
+	if !task.AutoRunFinished.Valid {
+		t.Error("AutoRunFinished should be set")
+	}
+}
+
 func TestCmdDoneHappyPath(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, nil) // no session, won't fire — but safe

@@ -74,6 +74,17 @@ func cmdDone(args []string) int {
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
+	// An in-flight `do --auto` run that calls `focusflow done` on itself
+	// has completed successfully, not crashed — record that distinction
+	// (auto_run_status='dead' is reserved for refreshAutoRunStatus
+	// finding a pid that's gone without a done call).
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='completed', auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
+		now, now, task.Slug,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: record auto_run completion: %v\n", err)
+	}
+
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		fmt.Print("updating kbs...")
 		if err := claudeRunner(task.Slug, buildKBSweepPrompt(task.Slug)); err != nil {

@@ -8,8 +8,17 @@ import (
 	"focusflow/internal/iterm"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
+
+// execCommand wraps exec.Command so tests can substitute a fake process
+// without depending on the real `claude` binary existing in the test
+// environment. Matches the iterm.Runner mocking pattern.
+var execCommand = exec.Command
 
 // openConcurrentDB opens focusflow.db with a generous busy_timeout so that two
 // concurrent `focusflow do` processes (or two goroutines in the tests) will
@@ -61,6 +70,7 @@ func cmdDo(args []string) int {
 	harness := fs.String("harness", "", "claude|codex (first-session choice only)")
 	with := fs.String("with", "", "one-off instruction to include in the session's first/next message")
 	withFile := fs.String("with-file", "", "path to a file whose contents are used as --with")
+	auto := fs.Bool("auto", false, "run headlessly in the background; implies --dangerously-skip-permissions")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -71,6 +81,13 @@ func cmdDo(args []string) int {
 	if *harness != "" && *harness != "claude" && *harness != "codex" {
 		fmt.Fprintf(os.Stderr, "error: --harness must be claude or codex, got %q\n", *harness)
 		return 2
+	}
+	if *auto && *here {
+		fmt.Fprintln(os.Stderr, "error: --auto and --here are mutually exclusive")
+		return 2
+	}
+	if *auto {
+		*dangerSkip = true
 	}
 	var withText string
 	if *with != "" {
@@ -204,6 +221,10 @@ func cmdDo(args []string) int {
 		return 1
 	}
 	committed = true
+
+	if *auto {
+		return spawnHeadless(db, task, sessionID, needsBootstrap, extraClaudeArgs, withText)
+	}
 
 	if *fresh && curSessionID.Valid {
 		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
@@ -477,4 +498,106 @@ func doHere(db *sql.DB, task *flowdb.Task, force bool) int {
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sessionID)
 	return 0
+}
+
+// spawnHeadless launches claude as a detached background process for
+// `do --auto`. Unlike the interactive tab path, this never blocks: it
+// starts the process, records its pid, and returns immediately. The
+// process is expected to call `focusflow done` on itself when finished
+// (per the flow skill's autonomous-mode contract) — spawnHeadless does
+// not wait for that; it only tracks whether the pid is still alive via
+// refreshAutoRunStatus, called lazily from list/show.
+func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstrap bool, extraArgs []string, withText string) int {
+	root, err := flowRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	logDir := filepath.Join(root, "tasks", task.Slug, "auto-runs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "error: mkdir %s: %v\n", logDir, err)
+		return 1
+	}
+	logPath := filepath.Join(logDir, time.Now().UTC().Format("2006-01-02-15-04-05")+".log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: create log %s: %v\n", logPath, err)
+		return 1
+	}
+
+	var args []string
+	if needsBootstrap {
+		playbookSlug := ""
+		if task.PlaybookSlug.Valid {
+			playbookSlug = task.PlaybookSlug.String
+		}
+		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, false)
+		if withText != "" {
+			prompt = prompt + "\n\n" + withText
+		}
+		args = []string{"--session-id", sessionID, prompt}
+	} else {
+		args = []string{"--resume", sessionID}
+		if withText != "" {
+			args = append(args, withText)
+		}
+	}
+	args = append(args, extraArgs...)
+
+	cmd := execCommand("claude", args...)
+	cmd.Dir = task.WorkDir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Env = append(os.Environ(), "FOCUSFLOW_TASK="+task.Slug)
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		fmt.Fprintf(os.Stderr, "error: start headless claude: %v\n", err)
+		return 1
+	}
+	pid := cmd.Process.Pid
+	go func() {
+		cmd.Wait()
+		logFile.Close()
+	}()
+
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?, auto_run_log=?, updated_at=? WHERE slug=?`,
+		pid, now, logPath, now, task.Slug,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record auto_run: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Started headless run for %s (pid %d), logging to %s\n", task.Slug, pid, logPath)
+	return 0
+}
+
+// refreshAutoRunStatus checks whether a task's recorded auto_run_pid is
+// still alive and, if the row claims 'running' but the pid is gone,
+// flips it to 'dead' (a crash/kill outside focusflow's control — not
+// the same as 'completed', which only `focusflow done` sets). No-op for
+// tasks with no in-flight auto run.
+func refreshAutoRunStatus(db *sql.DB, task *flowdb.Task) error {
+	if !task.AutoRunStatus.Valid || task.AutoRunStatus.String != "running" || !task.AutoRunPID.Valid {
+		return nil
+	}
+	proc, err := os.FindProcess(int(task.AutoRunPID.Int64))
+	if err != nil {
+		return markAutoRunDead(db, task.Slug)
+	}
+	// On Unix, FindProcess always succeeds; signal 0 is the standard
+	// liveness probe — it errors if the process doesn't exist.
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return markAutoRunDead(db, task.Slug)
+	}
+	return nil
+}
+
+func markAutoRunDead(db *sql.DB, slug string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
+		now, now, slug,
+	)
+	return err
 }
