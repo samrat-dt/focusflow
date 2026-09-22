@@ -2,8 +2,8 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// cmdShow dispatches `flow show task|project|playbook`. Per spec §5.4.
+// cmdShow dispatches `focusflow show task|project|playbook`. Per spec §5.4.
 func cmdShow(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', or 'playbook'")
@@ -30,7 +30,7 @@ func cmdShow(args []string) int {
 	return 2
 }
 
-// showTaskCmd implements `flow show task [<ref>]`.
+// showTaskCmd implements `focusflow show task [<ref>]`.
 func showTaskCmd(args []string) int {
 	fs := flagSet("show task")
 	if err := fs.Parse(args); err != nil {
@@ -41,10 +41,10 @@ func showTaskCmd(args []string) int {
 		ref = fs.Arg(0)
 	}
 	if ref == "" {
-		ref = os.Getenv("FLOW_TASK")
+		ref = os.Getenv("FOCUSFLOW_TASK")
 	}
 	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no task ref given and $FLOW_TASK not set")
+		fmt.Fprintln(os.Stderr, "error: no task ref given and $FOCUSFLOW_TASK not set")
 		return 1
 	}
 
@@ -75,7 +75,7 @@ func showTaskCmd(args []string) int {
 	return 0
 }
 
-// showProjectCmd implements `flow show project [<ref>]`.
+// showProjectCmd implements `focusflow show project [<ref>]`.
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
 	if err := fs.Parse(args); err != nil {
@@ -86,10 +86,10 @@ func showProjectCmd(args []string) int {
 		ref = fs.Arg(0)
 	}
 	if ref == "" {
-		ref = os.Getenv("FLOW_PROJECT")
+		ref = os.Getenv("FOCUSFLOW_PROJECT")
 	}
 	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no project ref given and $FLOW_PROJECT not set")
+		fmt.Fprintln(os.Stderr, "error: no project ref given and $FOCUSFLOW_PROJECT not set")
 		return 1
 	}
 
@@ -120,7 +120,7 @@ func showProjectCmd(args []string) int {
 	return 0
 }
 
-// showPlaybookCmd implements `flow show playbook [<ref>]`.
+// showPlaybookCmd implements `focusflow show playbook [<ref>]`.
 func showPlaybookCmd(args []string) int {
 	fs := flagSet("show playbook")
 	if err := fs.Parse(args); err != nil {
@@ -287,7 +287,7 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 
 	// Transcript CTA — only shown when the task has a session.
 	if t.SessionID.Valid && t.SessionID.String != "" {
-		fmt.Printf("transcript:    run `flow transcript %s` to view conversation history\n", t.Slug)
+		fmt.Printf("transcript:    run `focusflow transcript %s` to view conversation history\n", t.Slug)
 	}
 
 	// Knowledge-base files — durable facts about the user and their org.
@@ -362,7 +362,7 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 		}
 	}
 
-	// Knowledge-base files, same as on `flow show task`.
+	// Knowledge-base files, same as on `focusflow show task`.
 	kb := kbFiles(root)
 	if len(kb) == 0 {
 		fmt.Println("kb:          (none)")
@@ -515,9 +515,9 @@ func listUpdateFiles(dir string) []string {
 }
 
 // staleDaysThreshold returns the staleness threshold in days. Reads
-// FLOW_STALE_DAYS env var; defaults to 3.
+// FOCUSFLOW_STALE_DAYS env var; defaults to 3.
 func staleDaysThreshold() int {
-	if s := os.Getenv("FLOW_STALE_DAYS"); s != "" {
+	if s := os.Getenv("FOCUSFLOW_STALE_DAYS"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
 			return n
 		}
@@ -527,7 +527,7 @@ func staleDaysThreshold() int {
 
 // taskStaleness returns (daysSinceLastTouch, stale) for an in-progress
 // task. "Last touch" is max(updated_at, newest update file mtime).
-// Staleness threshold is configurable via FLOW_STALE_DAYS (default 3).
+// Staleness threshold is configurable via FOCUSFLOW_STALE_DAYS (default 3).
 func taskStaleness(t *flowdb.Task, root string) (int, bool) {
 	last, err := time.Parse(time.RFC3339, t.UpdatedAt)
 	if err != nil {
@@ -613,7 +613,7 @@ func formatDueDateInfo(dateStr string, now time.Time) string {
 }
 
 // temporalSummary builds the "in-progress for 5 days, due in 2 days"
-// line for `flow show task`.
+// line for `focusflow show task`.
 func temporalSummary(t *flowdb.Task, now time.Time) string {
 	var parts []string
 

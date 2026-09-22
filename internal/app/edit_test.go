@@ -1,7 +1,7 @@
 package app
 
 import (
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"runtime"

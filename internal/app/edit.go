@@ -2,8 +2,8 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"os/exec"
 	"path/filepath"

@@ -1,4 +1,4 @@
-// Package db implements the SQLite data layer for flow.
+// Package db implements the SQLite data layer for focusflow.
 package flowdb
 
 import (
@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// schemaDDL is the full DDL for flow.db. Each statement is idempotent
+// schemaDDL is the full DDL for focusflow.db. Each statement is idempotent
 // (CREATE ... IF NOT EXISTS) so OpenDB can run this on every startup.
 //
 // Note on NULL-safe equality: SQLite's `IS` operator treats NULLs as

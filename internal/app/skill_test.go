@@ -24,13 +24,13 @@ func TestSkillInstallWritesFile(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	path := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	path := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(string(data), "name: flow") {
-		t.Errorf("installed skill missing frontmatter 'name: flow'")
+	if !strings.Contains(string(data), "name: focusflow") {
+		t.Errorf("installed skill missing frontmatter 'name: focusflow'")
 	}
 	if !strings.Contains(string(data), "---") {
 		t.Errorf("installed skill missing YAML frontmatter delimiters")
@@ -49,7 +49,7 @@ func TestSkillInstallErrorsOnExisting(t *testing.T) {
 
 func TestSkillInstallForceOverwrites(t *testing.T) {
 	home := withTempHome(t)
-	path := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	path := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 
 	// Pre-create something different.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -87,7 +87,7 @@ func TestSkillUninstallRemovesDir(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	dir := filepath.Join(home, ".claude", "skills", "flow")
+	dir := filepath.Join(home, ".claude", "skills", "focusflow")
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("skill dir missing after install: %v", err)
 	}
@@ -121,19 +121,19 @@ func TestSkillMentionsPlaybooks(t *testing.T) {
 	for _, want := range []string{
 		"## 2. The model",
 		"**Playbooks**",
-		"flow add playbook",
-		"flow run playbook",
-		"flow list playbooks",
-		"flow show playbook",
-		"flow list runs",
+		"focusflow add playbook",
+		"focusflow run playbook",
+		"focusflow list playbooks",
+		"focusflow show playbook",
+		"focusflow list runs",
 		"Active playbooks",
 		"playbooks/<slug>/updates/",
 		"playbook definitions are never \"done\" — they're archived",
-		"flow archive <playbook-slug>",
+		"focusflow archive <playbook-slug>",
 		"## Playbook activity",
 		"Each run does",
 		"Signals to watch for",
-		"Do not auto-fire `flow run playbook`",
+		"Do not auto-fire `focusflow run playbook`",
 		"snapshot",
 		"Do not propose scheduling during playbook intake",
 		"the bootstrapped task\" includes playbook-run tasks",

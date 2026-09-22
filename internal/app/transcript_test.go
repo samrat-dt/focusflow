@@ -1,8 +1,8 @@
 package app
 
 import (
-	"flow/internal/flowdb"
-	"flow/internal/iterm"
+	"focusflow/internal/flowdb"
+	"focusflow/internal/iterm"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,7 +131,7 @@ func TestTranscriptCompact(t *testing.T) {
 
 func TestTranscriptCmdNoSession(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
+	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, "focusflow"))
 	t.Setenv("HOME", tmp)
 
 	oldOsa := iterm.Runner
@@ -149,7 +149,7 @@ func TestTranscriptCmdNoSession(t *testing.T) {
 
 func TestTranscriptCmdWithSession(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
+	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, "focusflow"))
 	t.Setenv("HOME", tmp)
 
 	oldOsa := iterm.Runner

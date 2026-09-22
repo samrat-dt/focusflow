@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 )
 
 func TestCmdAddPlaybookHappyPath(t *testing.T) {

@@ -2,15 +2,15 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-// cmdList dispatches `flow list tasks|projects|playbooks|runs`. Per spec §5.4.
+// cmdList dispatches `focusflow list tasks|projects|playbooks|runs`. Per spec §5.4.
 func cmdList(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', or 'runs'")

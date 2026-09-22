@@ -2,7 +2,7 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"strings"
@@ -687,7 +687,7 @@ func TestCmdListTasksConfigurableStaleness(t *testing.T) {
 		t.Errorf("should not be stale at default threshold; out=%q", out)
 	}
 
-	t.Setenv("FLOW_STALE_DAYS", "1")
+	t.Setenv("FOCUSFLOW_STALE_DAYS", "1")
 	out2 := captureStdout(t, func() {
 		if rc := cmdList([]string{"tasks"}); rc != 0 {
 			t.Errorf("rc=%d", rc)

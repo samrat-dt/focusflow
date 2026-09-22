@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-// cmdHook dispatches `flow hook <subcommand>`. The only subcommand in
+// cmdHook dispatches `focusflow hook <subcommand>`. The only subcommand in
 // v2 is `session-start`, which is intended to be wired as a Claude Code
 // SessionStart hook so that EVERY session start (fresh spawn AND resume)
 // re-injects the "load your task context" instruction. Without the hook,
@@ -32,12 +32,12 @@ func cmdHook(args []string) int {
 // so it fires for both fresh spawns and `claude --resume`.
 //
 // Two modes:
-//   - $FLOW_TASK set (spawned by `flow do`): emit the full task-context
+//   - $FOCUSFLOW_TASK set (spawned by `focusflow do`): emit the full task-context
 //     reload instructions. On a fresh spawn this is redundant with the
 //     bootstrap prompt but harmless; on a resume it's the only way to
 //     force the agent to re-read potentially-updated briefs and updates.
-//   - $FLOW_TASK unset (ad-hoc session, e.g. bare `claude`): emit a
-//     short hint that the flow skill is installed and should be used
+//   - $FOCUSFLOW_TASK unset (ad-hoc session, e.g. bare `claude`): emit a
+//     short hint that the focusflow skill is installed and should be used
 //     when the request touches task / project / session management.
 //     Without this, Claude Code may not auto-invoke the skill on the
 //     user's first message.
@@ -47,54 +47,54 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 
-	slug := os.Getenv("FLOW_TASK")
+	slug := os.Getenv("FOCUSFLOW_TASK")
 	if slug == "" {
 		return emitAmbientSkillHint()
 	}
 
 	instructions := fmt.Sprintf(
-		"You are running inside a flow execution session for task %q. "+
+		"You are running inside a focusflow execution session for task %q. "+
 			"Before doing anything else in this turn, re-load your task context — "+
 			"the brief and update files may have been edited since your previous "+
 			"session. Do these in order: "+
-			"(1) invoke the `flow` skill via the Skill tool. That skill is your "+
+			"(1) invoke the `focusflow` skill via the Skill tool. That skill is your "+
 			"operating manual for this session: it defines the bootstrap contract, "+
 			"the workflows for starting/saving/logging/archiving work, KB scoop "+
 			"discipline, and the scope-creep detection that keeps unrelated work "+
 			"from landing in the wrong task. "+
-			"(2) run `flow show task` and use your Read tool on the file at the "+
+			"(2) run `focusflow show task` and use your Read tool on the file at the "+
 			"`brief:` path AND every file listed under `updates:`; "+
-			"(3) if a project is listed on the task, run `flow show project <that-slug>` "+
+			"(3) if a project is listed on the task, run `focusflow show project <that-slug>` "+
 			"and Read its brief and updates too; "+
 			"(4) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
 			"subdirectories you plan to modify. "+
 			"Only then proceed with the user's request. "+
 			"If any brief section is blank or unclear, ASK — do not infer. "+
-			"The `kb:` section of `flow show task` lists the knowledge-base files "+
+			"The `kb:` section of `focusflow show task` lists the knowledge-base files "+
 			"(durable facts about the user, org, products, processes, business). "+
 			"DO NOT read these eagerly on every turn — lazy-load only when the current "+
 			"task requires that context (e.g. a brief that uses domain-specific terminology "+
 			"you don't recognize, a question about who someone is, a request for org context). "+
 			"Throughout the session, if the user shares a durable fact about themselves, "+
 			"the org, products, processes, or business, append it to the matching kb "+
-			"file on the fly — no permission needed — per the flow skill's §4.10.",
+			"file on the fly — no permission needed — per the focusflow skill's §4.10.",
 		slug,
 	)
 
 	return emitSessionStartContext(instructions)
 }
 
-// emitAmbientSkillHint is the FLOW_TASK-unset branch of the SessionStart
+// emitAmbientSkillHint is the FOCUSFLOW_TASK-unset branch of the SessionStart
 // hook. Used for ad-hoc `claude` sessions where there is no specific
-// task to load. It nudges Claude to invoke the flow skill when
-// the user's request touches flow-managed concerns, and — critically —
-// to offer to create a new flow task or switch to an existing one when
+// task to load. It nudges Claude to invoke the focusflow skill when
+// the user's request touches focusflow-managed concerns, and — critically —
+// to offer to create a new focusflow task or switch to an existing one when
 // the user starts substantive work without a task attached. Otherwise
 // the transcript of this session is homeless: no brief, no updates, no
 // resumability tomorrow.
 func emitAmbientSkillHint() int {
-	hint := "This session is not bound to any flow task (FLOW_TASK is unset).\n" +
-		"When substantive work emerges, run §4.14 of the flow skill to offer the user a flow task.\n" +
+	hint := "This session is not bound to any focusflow task (FOCUSFLOW_TASK is unset).\n" +
+		"When substantive work emerges, run §4.14 of the focusflow skill to offer the user a focusflow task.\n" +
 		"The check is ongoing, not one-shot — re-evaluate on every turn."
 	return emitSessionStartContext(hint)
 }

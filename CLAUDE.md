@@ -1,15 +1,15 @@
-# flow — repo conventions
+# focusflow — repo conventions
 
 ## What this is
 
-A Go CLI (`flow`) that manages personal tasks and bootstraps per-task Claude Code sessions. SQLite via `modernc.org/sqlite` (pure Go, no CGO).
+A Go CLI (`focusflow`) that manages personal tasks and bootstraps per-task Claude Code sessions. SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 
 ## Build and test
 
 ```bash
-# Build (produces ./flow in the repo dir, which is on PATH)
+# Build (produces ./focusflow in the repo dir, which is on PATH)
 make build
-# or: go build -o flow .
+# or: go build -o focusflow .
 
 # Full install (build + PATH + init + skill + hook)
 make install
@@ -22,32 +22,32 @@ make test
 go test -run TestE2EFullRoundtrip -v ./internal/app/
 ```
 
-Tests use `$FLOW_ROOT` pointed at a temp directory and override `$HOME` so nothing touches real `~/.flow/` or `~/.claude/`. External dependencies (osascript, claude CLI) are mocked via package-level function vars.
+Tests use `$FOCUSFLOW_ROOT` pointed at a temp directory and override `$HOME` so nothing touches real `~/.focusflow/` or `~/.claude/`. External dependencies (osascript, claude CLI) are mocked via package-level function vars.
 
 ## Project structure
 
 ```
-flow/
+focusflow/
 ├── main.go                          # thin entry point — calls app.Run()
 ├── internal/
 │   ├── app/                         # CLI commands and dispatch
 │   │   ├── app.go                   # Run(), printUsage()
 │   │   ├── helpers.go               # flagSet()
-│   │   ├── add.go                   # flow add project|task
-│   │   ├── archive.go               # flow archive|unarchive
-│   │   ├── do.go                    # flow do — session spawner
-│   │   ├── done.go                  # flow done
-│   │   ├── due.go                   # flow due
-│   │   ├── edit.go                  # flow edit
-│   │   ├── hook.go                  # flow hook session-start
-│   │   ├── init.go                  # flow init, flowRoot(), kbSeeds()
-│   │   ├── list.go                  # flow list tasks|projects
-│   │   ├── priority.go              # flow priority
-│   │   ├── show.go                  # flow show task|project
-│   │   ├── skill.go                 # flow skill install|uninstall|update
-│   │   ├── transcript.go            # flow transcript — session jsonl reader
-│   │   ├── waiting.go               # flow waiting
-│   │   ├── workdir.go               # flow workdir
+│   │   ├── add.go                   # focusflow add project|task
+│   │   ├── archive.go               # focusflow archive|unarchive
+│   │   ├── do.go                    # focusflow do — session spawner
+│   │   ├── done.go                  # focusflow done
+│   │   ├── due.go                   # focusflow due
+│   │   ├── edit.go                  # focusflow edit
+│   │   ├── hook.go                  # focusflow hook session-start
+│   │   ├── init.go                  # focusflow init, flowRoot(), kbSeeds()
+│   │   ├── list.go                  # focusflow list tasks|projects
+│   │   ├── priority.go              # focusflow priority
+│   │   ├── show.go                  # focusflow show task|project
+│   │   ├── skill.go                 # focusflow skill install|uninstall|update
+│   │   ├── transcript.go            # focusflow transcript — session jsonl reader
+│   │   ├── waiting.go               # focusflow waiting
+│   │   ├── workdir.go               # focusflow workdir
 │   │   ├── bootstrap.go             # UUID gen, session file scanning
 │   │   ├── resolve.go               # task/project slug resolution
 │   │   ├── slug.go                  # name-to-slug conversion
@@ -80,14 +80,14 @@ flow/
 - **Timestamps:** RFC3339 strings everywhere (never Unix timestamps).
 - **Tests:** Table-driven where possible. Command tests live alongside source in `internal/app/`. `e2e_test.go` exercises the full command surface in sequence.
 - **No mocks for DB.** Tests use real SQLite in a temp directory. Only osascript is mocked (via `iterm.Runner` function var).
-- **Skill file is the source of truth** for how Claude sessions interact with flow. If the skill says something, the code must support it.
-- **Skill embed path:** `internal/app/skill/SKILL.md` is embedded at compile time via `//go:embed` in `internal/app/skill.go`. After editing, rebuild for `flow skill update` to pick up changes.
+- **Skill file is the source of truth** for how Claude sessions interact with focusflow. If the skill says something, the code must support it.
+- **Skill embed path:** `internal/app/skill/SKILL.md` is embedded at compile time via `//go:embed` in `internal/app/skill.go`. After editing, rebuild for `focusflow skill update` to pick up changes.
 
 ## Data directory layout
 
 ```
-~/.flow/
-  flow.db
+~/.focusflow/
+  focusflow.db
   kb/{user,org,products,processes,business}.md
   projects/<slug>/brief.md
   projects/<slug>/updates/*.md

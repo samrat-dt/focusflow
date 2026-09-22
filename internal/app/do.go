@@ -3,15 +3,15 @@ package app
 import (
 	"database/sql"
 	"errors"
-	"flow/internal/flowdb"
-	"flow/internal/iterm"
 	"fmt"
+	"focusflow/internal/flowdb"
+	"focusflow/internal/iterm"
 	"net/url"
 	"os"
 )
 
-// openConcurrentDB opens flow.db with a generous busy_timeout so that two
-// concurrent `flow do` processes (or two goroutines in the tests) will
+// openConcurrentDB opens focusflow.db with a generous busy_timeout so that two
+// concurrent `focusflow do` processes (or two goroutines in the tests) will
 // serialize at the SQLite file level rather than failing fast with
 // SQLITE_BUSY. The pragma is applied at connection-open time via the DSN
 // so every conn in the pool inherits it. Schema creation still runs via
@@ -28,7 +28,7 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 	// 30s is enough to cover realistic bootstraps; tests finish in ms.
 	q.Set("_pragma", "busy_timeout(30000)")
 	// BEGIN IMMEDIATE acquires a RESERVED lock up-front, so two concurrent
-	// `flow do` transactions serialize at tx.Begin() (waiting on the busy
+	// `focusflow do` transactions serialize at tx.Begin() (waiting on the busy
 	// timeout) instead of racing to the first write and failing.
 	q.Set("_txlock", "immediate")
 	dsn := "file:" + path + "?" + q.Encode()
@@ -196,9 +196,9 @@ func cmdDo(args []string) int {
 	// Spawn the iTerm tab.
 	//
 	// We shell out to `claude` directly (no wrapper). The skill on disk at
-	// ~/.claude/skills/flow/SKILL.md is whatever was last installed via
-	// `flow skill install` / `flow skill update`. To refresh it after
-	// upgrading flow, the user runs `flow skill update` manually.
+	// ~/.claude/skills/focusflow/SKILL.md is whatever was last installed via
+	// `focusflow skill install` / `focusflow skill update`. To refresh it after
+	// upgrading focusflow, the user runs `focusflow skill update` manually.
 	var command string
 	if needsBootstrap {
 		// Fresh bootstrap path: we pre-allocated the session UUID above
@@ -232,9 +232,9 @@ func cmdDo(args []string) int {
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
 	}
-	envVars := map[string]string{"FLOW_TASK": task.Slug}
+	envVars := map[string]string{"FOCUSFLOW_TASK": task.Slug}
 	if project != nil {
-		envVars["FLOW_PROJECT"] = project.Slug
+		envVars["FOCUSFLOW_PROJECT"] = project.Slug
 	}
 	if err := iterm.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -276,11 +276,11 @@ func cmdDo(args []string) int {
 // quotes, backticks, or dollar signs — because it gets shell-quoted
 // as a single positional argument to `claude`.
 //
-// The session's UUID is pre-allocated by `flow do` and passed via
+// The session's UUID is pre-allocated by `focusflow do` and passed via
 // `claude --session-id <uuid>`, so there is no self-registration step
 // here. The session loads context in order: task brief + task updates,
 // then (if any) project brief + project updates, then CLAUDE.md files
-// in the work_dir. The flow skill enforces this sequence too; the
+// in the work_dir. The focusflow skill enforces this sequence too; the
 // bootstrap prompt is a backup in case the skill isn't auto-activated.
 // Kept for callers (and tests) that don't track first-run state. New
 // callers should use buildBootstrapPromptForKindV2 to opt into the
@@ -304,10 +304,10 @@ func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun b
 // buildTaskBootstrapPrompt is the prompt for regular tasks.
 func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
-		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
-			"2. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references — load on demand when relevant, not eagerly.\n"+
-			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
+		"You are the execution session for focusflow task %s. Do ALL of the following in order before touching code:\n"+
+			"1. Invoke the focusflow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"2. Run: focusflow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references — load on demand when relevant, not eagerly.\n"+
+			"3. If a project is listed on the task, run: focusflow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
 			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
@@ -315,21 +315,21 @@ func buildTaskBootstrapPrompt(slug string) string {
 }
 
 // buildPlaybookRunBootstrapPrompt is the prompt for playbook-run tasks.
-// Adds an explicit `flow show playbook <slug>` context-load step and
+// Adds an explicit `focusflow show playbook <slug>` context-load step and
 // frames the run's brief as an authoritative snapshot — the session
 // must execute against that snapshot, not re-read the live playbook
 // brief (which may drift between runs).
 func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bool) string {
 	base := fmt.Sprintf(
 		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
-			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
-			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
-			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
+			"1. Invoke the focusflow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
+			"2. Run: focusflow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
+			"3. Run: focusflow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
+			"4. If a project is listed on the task, run: focusflow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
 			"5. Read CLAUDE.md in your work_dir.\n"+
 			"6. Only then begin executing your brief.\n"+
 			"\n"+
-			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",
+			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See focusflow skill §4.13 for the full pattern.",
 		playbookSlug, runSlug, playbookSlug, playbookSlug, playbookSlug,
 	)
 
@@ -346,10 +346,10 @@ func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bo
 			"\n"+
 			"- When you write a script, command, or settle on a concrete decision rule that wasn't in the brief: don't wait for the user to ask. Pause and AskUserQuestion whether to capture it. Three capture targets:\n"+
 			"    • 'Add to playbook brief' — append/edit the relevant section of playbooks/%s/brief.md so future runs see it inline\n"+
-			"    • 'Save as sidecar file' — write to playbooks/%s/<topic>.md (e.g. decision-tree.md, sample-script.md, edge-cases.md). These get surfaced under `other:` in flow show playbook for future runs to load on demand\n"+
+			"    • 'Save as sidecar file' — write to playbooks/%s/<topic>.md (e.g. decision-tree.md, sample-script.md, edge-cases.md). These get surfaced under `other:` in focusflow show playbook for future runs to load on demand\n"+
 			"    • 'Just this run' — apply locally, don't change the playbook (rare; usually means it's run-specific)\n"+
 			"- When you discover an edge case or signal worth watching: AskUserQuestion whether to add it to the 'Signals to watch for' section of the live brief.\n"+
-			"- Before flow done at the end of the run, AskUserQuestion: 'Capture anything from this run back to the playbook before closing?' Options: 'Yes — walk me through what to capture' / 'No, close out as-is'. The 'walk me through' path: list candidate captures (scripts produced, decisions made, edge cases hit, commands you ended up using) and offer per-item via AskUserQuestion.\n"+
+			"- Before focusflow done at the end of the run, AskUserQuestion: 'Capture anything from this run back to the playbook before closing?' Options: 'Yes — walk me through what to capture' / 'No, close out as-is'. The 'walk me through' path: list candidate captures (scripts produced, decisions made, edge cases hit, commands you ended up using) and offer per-item via AskUserQuestion.\n"+
 			"\n"+
 			"After this run, the playbook should be substantially more concrete than the aspirational brief it started with. That's the point. Treat capture-back as a primary deliverable of the first run, not an afterthought.",
 		playbookSlug, playbookSlug,

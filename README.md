@@ -1,4 +1,28 @@
-# flow
+# focusflow
+
+> **This is a fork of [flow](https://github.com/Facets-cloud/flow).** Bootstrapped
+> 2026-09-22 as a genuine, independently-maintained fork — not a replacement. Both
+> `flow` and `focusflow` are meant to keep running side by side, with fully
+> separate binaries (`flow` / `focusflow`), data roots (`~/.flow/` /
+> `~/.focusflow/`), Claude Code skills (`~/.claude/skills/flow/` /
+> `~/.claude/skills/focusflow/`), and SessionStart hooks. Nothing in `flow`
+> was modified to create this fork.
+>
+> **What changed in the fork:** the Go module path (`flow` → `focusflow`),
+> the binary name, the skill install path, the `SessionStart` hook command
+> string, every `FLOW_*`-prefixed env var (`FOCUSFLOW_ROOT`, `FOCUSFLOW_TASK`,
+> `FOCUSFLOW_PROJECT`, `FOCUSFLOW_STALE_DAYS`), and all user-visible strings
+> (CLI output, this README, the embedded skill's own prose) — a rename pass
+> only, no behavior changes. The motivation: owning the source directly
+> (rather than working around flow's fixed schema/CLI from the outside) to
+> eventually build real `next`/`review` statuses, native project sessions, a
+> real pause/kill verb, and inbox delivery-acks — none of that is built yet;
+> this fork is the bootstrap only.
+>
+> **How the two stay in sync going forward is unresolved.** No cherry-pick
+> process, hard-fork-and-drift policy, or anything else has been decided —
+> that's a real conversation to have now that the fork exists, not a
+> mechanism baked in here. Don't assume fixes land in both automatically.
 
 You don't hire a new engineer every day. You hire one, and you work together.
 
@@ -7,7 +31,7 @@ session starts from zero. It doesn't know what you're building, what you
 tried yesterday, or why you care. You re-explain yourself constantly.
 The more sessions you run, the worse it gets.
 
-flow is the working relationship between you and Claude.
+focusflow is the working relationship between you and Claude.
 
 It's not a task tracker. It's not a session manager. It's the layer that
 turns isolated Claude conversations into continuous collaboration — where
@@ -29,15 +53,15 @@ Think about how you use Claude today:
 
 The bottleneck isn't Claude's capability. It's context.
 
-## What flow does
+## What focusflow does
 
-flow sits between you and Claude. You tell flow what you're working on
+focusflow sits between you and Claude. You tell focusflow what you're working on
 and why. Claude gets that context automatically — every session, every
 time.
 
 **You capture your work once.**
 Projects, tasks, priorities, acceptance criteria — structured through a
-quick interview, not a form. Flow asks what, why, where, and done-when,
+quick interview, not a form. Focusflow asks what, why, where, and done-when,
 then writes it down.
 
 **Claude shows up informed.**
@@ -51,14 +75,14 @@ about you on day 50 is radically different from day 1. You stop
 repeating yourself. Claude starts anticipating.
 
 **Sessions persist.**
-Pick up where you left off. `flow do auth` resumes the same Claude
+Pick up where you left off. `focusflow do auth` resumes the same Claude
 conversation — same context, same thread, same momentum.
 
 ## How it works
 
 - **Projects and tasks** live in a local SQLite database. Each task gets
   a markdown brief capturing what, why, where, and done-when.
-- **`flow do <task>`** spawns a Claude session in a dedicated iTerm tab
+- **`focusflow do <task>`** spawns a Claude session in a dedicated iTerm tab
   with full context injected — brief, progress notes, repo conventions,
   knowledge base. Resume the same session tomorrow with the same command.
 - **Knowledge base** — five markdown files tracking durable facts about
@@ -66,7 +90,7 @@ conversation — same context, same thread, same momentum.
   reads these and learns them over time. You never repeat yourself.
 - **Progress notes** — append-only logs under each task. Context survives
   across sessions so Claude knows what happened last time.
-- **A Claude skill** interprets natural language into flow commands. Say
+- **A Claude skill** interprets natural language into focusflow commands. Say
   "what should I work on" or "add a task" — the skill handles the rest.
 
 ## Prerequisites
@@ -85,16 +109,16 @@ ARCH=arm64
 # Intel:
 # ARCH=amd64
 
-curl -fsSL -o /usr/local/bin/flow \
-  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
-chmod +x /usr/local/bin/flow
-xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
+curl -fsSL -o /usr/local/bin/focusflow \
+  "https://github.com/Facets-cloud/focusflow/releases/latest/download/focusflow-darwin-${ARCH}"
+chmod +x /usr/local/bin/focusflow
+xattr -d com.apple.quarantine /usr/local/bin/focusflow 2>/dev/null || true
 
-flow init
+focusflow init
 ```
 
-`flow init` creates `~/.flow/`, the database, the knowledge base, and
-installs the flow skill into `~/.claude/skills/flow/SKILL.md` plus a
+`focusflow init` creates `~/.focusflow/`, the database, the knowledge base, and
+installs the focusflow skill into `~/.claude/skills/focusflow/SKILL.md` plus a
 SessionStart hook in `~/.claude/settings.json`.
 
 Then run **`claude`** and say **"let's get to work"**.
@@ -109,31 +133,31 @@ Then run **`claude`** and say **"let's get to work"**.
 Re-download the binary the same way you installed it:
 
 ```bash
-curl -fsSL -o /usr/local/bin/flow \
-  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
-chmod +x /usr/local/bin/flow
-xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
+curl -fsSL -o /usr/local/bin/focusflow \
+  "https://github.com/Facets-cloud/focusflow/releases/latest/download/focusflow-darwin-${ARCH}"
+chmod +x /usr/local/bin/focusflow
+xattr -d com.apple.quarantine /usr/local/bin/focusflow 2>/dev/null || true
 ```
 
-The next time you run any flow command, the binary detects the version
+The next time you run any focusflow command, the binary detects the version
 bump and refreshes the skill + SessionStart hook automatically. Check
 the running version with:
 
 ```bash
-flow --version
+focusflow --version
 ```
 
 ## Build from source
 
-If you want to hack on flow, clone and build with the included
+If you want to hack on focusflow, clone and build with the included
 Makefile:
 
 ```bash
-git clone git@github.com:Facets-cloud/flow.git
-cd flow
+git clone git@github.com:Facets-cloud/focusflow.git
+cd focusflow
 make install     # builds, adds repo dir to PATH, installs skill + hook
 source ~/.zshrc
-flow init
+focusflow init
 ```
 
 Local dev builds are tagged `dev` and skip the auto-upgrade check, so
@@ -152,36 +176,36 @@ You don't need to memorize commands. Just talk to Claude:
 For direct CLI use:
 
 ```bash
-flow add project "My App" --work-dir ~/code/my-app
-flow add task "Add auth" --project my-app --slug auth
-flow do auth
-flow list tasks --status in-progress
-flow done auth
+focusflow add project "My App" --work-dir ~/code/my-app
+focusflow add task "Add auth" --project my-app --slug auth
+focusflow do auth
+focusflow list tasks --status in-progress
+focusflow done auth
 ```
 
 ## How it works under the hood
 
-`flow do <task>` pre-allocates a session UUID, writes it to the task row,
+`focusflow do <task>` pre-allocates a session UUID, writes it to the task row,
 and spawns a new iTerm tab running `claude --session-id <uuid>` with
-`FLOW_TASK` / `FLOW_PROJECT` environment variables inlined. The jsonl
+`FOCUSFLOW_TASK` / `FOCUSFLOW_PROJECT` environment variables inlined. The jsonl
 file lands at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so future `flow do`
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so future `focusflow do`
 calls spawn `claude --resume <uuid>` to continue the same conversation.
 A SessionStart hook re-injects the task brief, updates, and CLAUDE.md
 context on every resume.
 
-Briefs live at `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate
-under `~/.flow/tasks/<slug>/updates/`. The flow skill (installed to
-`~/.claude/skills/flow/SKILL.md`) interprets natural language into flow
+Briefs live at `~/.focusflow/tasks/<slug>/brief.md`. Progress notes accumulate
+under `~/.focusflow/tasks/<slug>/updates/`. The focusflow skill (installed to
+`~/.claude/skills/focusflow/SKILL.md`) interprets natural language into focusflow
 commands and enforces interview-driven intake.
 
 ## Data directory
 
-All runtime state lives under `~/.flow/` (or `$FLOW_ROOT` if set):
+All runtime state lives under `~/.focusflow/` (or `$FOCUSFLOW_ROOT` if set):
 
 ```
-~/.flow/
-  flow.db          # SQLite database
+~/.focusflow/
+  focusflow.db          # SQLite database
   kb/              # knowledge base (5 markdown files)
   projects/        # per-project briefs and updates
   tasks/           # per-task briefs and updates
@@ -191,7 +215,7 @@ All runtime state lives under `~/.flow/` (or `$FLOW_ROOT` if set):
 
 | Variable | Purpose |
 |---|---|
-| `FLOW_ROOT` | Override the default `~/.flow` data directory |
-| `FLOW_TASK` | Set by `flow do` — current task slug |
-| `FLOW_PROJECT` | Set by `flow do` — current project slug |
-| `FLOW_STALE_DAYS` | Staleness threshold in days (default: 3) |
+| `FOCUSFLOW_ROOT` | Override the default `~/.focusflow` data directory |
+| `FOCUSFLOW_TASK` | Set by `focusflow do` — current task slug |
+| `FOCUSFLOW_PROJECT` | Set by `focusflow do` — current project slug |
+| `FOCUSFLOW_STALE_DAYS` | Staleness threshold in days (default: 3) |

@@ -3,16 +3,16 @@ package app
 import (
 	"database/sql"
 	"errors"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"regexp"
 )
 
-// cmdUpdate dispatches `flow update <kind>`. v1 supports `task` only;
+// cmdUpdate dispatches `focusflow update <kind>`. v1 supports `task` only;
 // the command exists as a manual escape hatch when the session_id or
 // work_dir drifts from what the DB has (e.g. the user spawned claude
-// outside `flow do`, or moved a repo on disk).
+// outside `focusflow do`, or moved a repo on disk).
 func cmdUpdate(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: update requires 'task' and a ref")
@@ -30,7 +30,7 @@ func cmdUpdate(args []string) int {
 // UUID, lowercase hex, with the version/variant bits enforced.
 var sessionUUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// cmdUpdateTask implements `flow update task <ref> [--session-id <uuid>]
+// cmdUpdateTask implements `focusflow update task <ref> [--session-id <uuid>]
 // [--work-dir <path>] [--mkdir]`. At least one field-changing flag must
 // be given.
 func cmdUpdateTask(args []string) int {

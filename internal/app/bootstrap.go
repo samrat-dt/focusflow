@@ -7,7 +7,7 @@ import (
 )
 
 // newUUID returns a new UUID v4 in the standard 8-4-4-4-12 hex format.
-// `flow do` pre-generates a UUID, claims it in the DB via an optimistic
+// `focusflow do` pre-generates a UUID, claims it in the DB via an optimistic
 // UPDATE, and then passes it to `claude --session-id` so the spawned
 // session is created with exactly that UUID. No stream parsing, no
 // filesystem polling, no post-hoc capture.
@@ -24,7 +24,7 @@ var newUUID = func() (string, error) {
 }
 
 // EncodeCwdForClaude encodes an absolute cwd path for Claude Code's
-// ~/.claude/projects/<dir> directory naming. Used by `flow transcript`
+// ~/.claude/projects/<dir> directory naming. Used by `focusflow transcript`
 // to locate a known session_id's jsonl on disk.
 //
 // Rule (derived empirically by scanning ~/.claude/projects/* against the
@@ -33,7 +33,7 @@ var newUUID = func() (string, error) {
 // Other characters pass through unchanged. Samples:
 //
 //	/Users/alice/code/myapp                      → -Users-alice-code-myapp
-//	/Users/alice/.flow/tasks/foo/workspace       → -Users-alice--flow-tasks-foo-workspace
+//	/Users/alice/.focusflow/tasks/foo/workspace       → -Users-alice--focusflow-tasks-foo-workspace
 //	/Users/alice/.cache/work/_default            → -Users-alice--cache-work--default
 //	/Users/alice/monorepo/.../1_input_instance   → ...-1-input-instance
 //

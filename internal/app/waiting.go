@@ -2,8 +2,8 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"strings"
 )
@@ -12,13 +12,13 @@ import (
 //
 // Usage:
 //
-//	flow waiting <ref> "<who or what>"
-//	flow waiting <ref> --clear
+//	focusflow waiting <ref> "<who or what>"
+//	focusflow waiting <ref> --clear
 //
 // Tasks only — applying to a project errors. Does not change status.
 func cmdWaiting(args []string) int {
 	// Pre-separate --clear and any text arg from the ref so the user can
-	// write `flow waiting <ref> --clear` as well as `flow waiting --clear <ref>`.
+	// write `focusflow waiting <ref> --clear` as well as `focusflow waiting --clear <ref>`.
 	// Go's flag package stops at the first positional, so we split manually.
 	clearFlag := false
 	var positional []string

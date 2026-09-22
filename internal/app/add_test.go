@@ -2,13 +2,13 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// setupFlowRoot sets up a tempdir FLOW_ROOT and runs cmdInit to create the
+// setupFlowRoot sets up a tempdir FOCUSFLOW_ROOT and runs cmdInit to create the
 // DB + tree. Returns the root path. Uses the init-test helper
 // `initTempFlowRoot` which also redirects $HOME so the skill install lands
 // inside the test sandbox.

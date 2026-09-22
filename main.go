@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"flow/internal/app"
+	"focusflow/internal/app"
 )
 
 // version is the binary version string. Overridden at build time via

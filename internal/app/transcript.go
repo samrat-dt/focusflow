@@ -5,14 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// cmdTranscript implements `flow transcript <task-slug>`. It reads the
+// cmdTranscript implements `focusflow transcript <task-slug>`. It reads the
 // task's Claude session jsonl and outputs a human-readable conversation
 // transcript. This enables cross-task context sharing: one task's
 // execution session can pipe the output into its context to learn what
@@ -33,10 +33,10 @@ func cmdTranscript(args []string) int {
 	}
 
 	if ref == "" {
-		ref = os.Getenv("FLOW_TASK")
+		ref = os.Getenv("FOCUSFLOW_TASK")
 	}
 	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no task ref given and $FLOW_TASK not set")
+		fmt.Fprintln(os.Stderr, "error: no task ref given and $FOCUSFLOW_TASK not set")
 		return 2
 	}
 
@@ -59,7 +59,7 @@ func cmdTranscript(args []string) int {
 	}
 
 	if !task.SessionID.Valid || task.SessionID.String == "" {
-		fmt.Fprintf(os.Stderr, "error: task %q has no session — run `flow do %s` first\n", task.Slug, task.Slug)
+		fmt.Fprintf(os.Stderr, "error: task %q has no session — run `focusflow do %s` first\n", task.Slug, task.Slug)
 		return 1
 	}
 
@@ -96,8 +96,8 @@ type jsonlRecord struct {
 
 // jsonlMessage is the message body inside user/assistant records.
 type jsonlMessage struct {
-	Role    string            `json:"role"`
-	Content json.RawMessage   `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 // contentBlock represents one block in the content array.
@@ -105,9 +105,9 @@ type contentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
 	Thinking  string          `json:"thinking"`
-	Name      string          `json:"name"`      // tool_use: tool name
-	ID        string          `json:"id"`        // tool_use: tool_use_id
-	Input     json.RawMessage `json:"input"`     // tool_use: input params
+	Name      string          `json:"name"`        // tool_use: tool name
+	ID        string          `json:"id"`          // tool_use: tool_use_id
+	Input     json.RawMessage `json:"input"`       // tool_use: input params
 	ToolUseID string          `json:"tool_use_id"` // tool_result
 	Content   json.RawMessage `json:"content"`     // tool_result: content (string or array)
 	IsError   bool            `json:"is_error"`    // tool_result

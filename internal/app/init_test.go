@@ -1,15 +1,15 @@
 package app
 
 import (
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// initTempFlowRoot points FLOW_ROOT at a tempdir AND redirects $HOME so
+// initTempFlowRoot points FOCUSFLOW_ROOT at a tempdir AND redirects $HOME so
 // skill install lands inside the tempdir as well. Isolates every init test
-// from the real ~/.flow/ and ~/.claude/skills/. Named with an `init` prefix
+// from the real ~/.focusflow/ and ~/.claude/skills/. Named with an `init` prefix
 // to avoid colliding with withTempFlowRoot defined in cmd_show_test.go
 // (which has a different signature because it returns (root, db)).
 func initTempFlowRoot(t *testing.T) string {
@@ -17,12 +17,12 @@ func initTempFlowRoot(t *testing.T) string {
 	root := t.TempDir()
 	home := t.TempDir()
 
-	oldRoot := os.Getenv("FLOW_ROOT")
+	oldRoot := os.Getenv("FOCUSFLOW_ROOT")
 	oldHome := os.Getenv("HOME")
-	os.Setenv("FLOW_ROOT", root)
+	os.Setenv("FOCUSFLOW_ROOT", root)
 	os.Setenv("HOME", home)
 	t.Cleanup(func() {
-		os.Setenv("FLOW_ROOT", oldRoot)
+		os.Setenv("FOCUSFLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
 	})
 	return root
@@ -52,9 +52,9 @@ func TestCmdInitCreatesDBQueryable(t *testing.T) {
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
-	dbPath := filepath.Join(root, "flow.db")
+	dbPath := filepath.Join(root, "focusflow.db")
 	if _, err := os.Stat(dbPath); err != nil {
-		t.Fatalf("flow.db missing: %v", err)
+		t.Fatalf("focusflow.db missing: %v", err)
 	}
 	db, err := flowdb.OpenDB(dbPath)
 	if err != nil {
@@ -77,8 +77,8 @@ func TestCmdInitIdempotent(t *testing.T) {
 		t.Fatalf("second init rc=%d", rc)
 	}
 	// Tree and DB still there.
-	if _, err := os.Stat(filepath.Join(root, "flow.db")); err != nil {
-		t.Errorf("flow.db missing after second init: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "focusflow.db")); err != nil {
+		t.Errorf("focusflow.db missing after second init: %v", err)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestCmdInitInstallsSkill(t *testing.T) {
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
-	skillPath := filepath.Join(os.Getenv("HOME"), ".claude", "skills", "flow", "SKILL.md")
+	skillPath := filepath.Join(os.Getenv("HOME"), ".claude", "skills", "focusflow", "SKILL.md")
 	info, err := os.Stat(skillPath)
 	if err != nil {
 		t.Fatalf("SKILL.md missing: %v", err)
@@ -100,7 +100,7 @@ func TestCmdInitInstallsSkill(t *testing.T) {
 func TestCmdInitSkipsSkillIfAlreadyPresent(t *testing.T) {
 	initTempFlowRoot(t)
 	home := os.Getenv("HOME")
-	skillPath := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	skillPath := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,8 @@
 package app
 
 import (
-	"flow/internal/flowdb"
-	"flow/internal/iterm"
+	"focusflow/internal/flowdb"
+	"focusflow/internal/iterm"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,12 +15,12 @@ import (
 // workdir registry.
 //
 // Mocks claudeRunner and iterm.Runner so nothing actually spawns
-// claude or osascript. Uses a temp FLOW_ROOT so the user's real ~/.flow is
+// claude or osascript. Uses a temp FOCUSFLOW_ROOT so the user's real ~/.focusflow is
 // untouched.
 func TestE2EFullRoundtrip(t *testing.T) {
 	tmp := t.TempDir()
-	flowRoot := filepath.Join(tmp, "flow")
-	t.Setenv("FLOW_ROOT", flowRoot)
+	flowRoot := filepath.Join(tmp, "focusflow")
+	t.Setenv("FOCUSFLOW_ROOT", flowRoot)
 	t.Setenv("HOME", tmp)
 
 	// Fake repo that serves as the project's work_dir.
@@ -40,7 +40,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	claudeRunner = func(slug, prompt string) error { return nil }
 	t.Cleanup(func() { claudeRunner = oldClaude })
 
-	// Pin the UUID `flow do` allocates so downstream assertions can
+	// Pin the UUID `focusflow do` allocates so downstream assertions can
 	// reference a known session_id. In production, newUUID produces a
 	// random v4 UUID that is also written to tasks.session_id before
 	// the iTerm tab spawns and passed to `claude --session-id`.
@@ -58,8 +58,8 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 1. init — creates tree, db, installs skill
 	step("init", cmdInit(nil))
-	if _, err := os.Stat(filepath.Join(flowRoot, "flow.db")); err != nil {
-		t.Fatalf("flow.db not created: %v", err)
+	if _, err := os.Stat(filepath.Join(flowRoot, "focusflow.db")); err != nil {
+		t.Fatalf("focusflow.db not created: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(flowRoot, "projects")); err != nil {
 		t.Fatalf("projects dir not created: %v", err)
@@ -90,7 +90,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	// session_id lands in the DB synchronously; no self-registration
 	// step is needed.
 	step("do", cmdDo([]string{"fix-auth-token-expiry"}))
-	db, err := flowdb.OpenDB(filepath.Join(flowRoot, "flow.db"))
+	db, err := flowdb.OpenDB(filepath.Join(flowRoot, "focusflow.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	if task.Status != "done" {
 		t.Errorf("status after done = %q, want done", task.Status)
 	}
-	// session_id should still be present (flow done is DB-only)
+	// session_id should still be present (focusflow done is DB-only)
 	if task.SessionID.String != "e2e-session-uuid" {
 		t.Errorf("session_id cleared by done: %v", task.SessionID)
 	}

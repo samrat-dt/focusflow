@@ -2,7 +2,7 @@ package app
 
 import (
 	"errors"
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"testing"
 )
 
@@ -130,7 +130,7 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 	// Sanity-check the prompt mentions key behavior so a regression in
 	// buildKBSweepPrompt that drops the skill load or the transcript
 	// step gets caught here.
-	for _, want := range []string{"flow skill", "flow transcript has-session", "kb/"} {
+	for _, want := range []string{"focusflow skill", "focusflow transcript has-session", "kb/"} {
 		if !contains(got.prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}

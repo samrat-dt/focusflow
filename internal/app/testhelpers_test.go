@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	flowdb "flow/internal/flowdb"
+	flowdb "focusflow/internal/flowdb"
 )
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "flow.db")
+	path := filepath.Join(t.TempDir(), "focusflow.db")
 	db, err := flowdb.OpenDB(path)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)

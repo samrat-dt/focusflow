@@ -3,8 +3,8 @@ package app
 import (
 	"database/sql"
 	"errors"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"time"
@@ -13,17 +13,17 @@ import (
 const projectBriefStub = `# %s
 
 What this project is, why it matters, success criteria. Edit this freely
-or let the flow skill interview you and rewrite it.
+or let the focusflow skill interview you and rewrite it.
 `
 
 const taskBriefStub = `# %s
 
-Edit this brief freely via ` + "`flow edit`" + ` or by composing a flow skill
+Edit this brief freely via ` + "`focusflow edit`" + ` or by composing a focusflow skill
 session. Sections to cover: What / Why / Where / Done when / Out of scope /
 Open questions.
 `
 
-// cmdAdd dispatches `flow add project|task|playbook ...`.
+// cmdAdd dispatches `focusflow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', or 'playbook'")
@@ -132,7 +132,7 @@ func addProject(args []string) int {
 	}
 
 	fmt.Printf("Created project %q at %s\n", slug, projDir)
-	fmt.Printf("Next: flow add task \"<name>\" --project %s\n", slug)
+	fmt.Printf("Next: focusflow add task \"<name>\" --project %s\n", slug)
 	return 0
 }
 
@@ -206,7 +206,7 @@ func addTask(args []string) int {
 	// Resolve work_dir with the three-way decision from spec §5.2:
 	//   - --work-dir given       → use it (must exist or --mkdir)
 	//   - --project given, no wd → inherit from project
-	//   - both omitted           → auto-create ~/.flow/tasks/<slug>/workspace/
+	//   - both omitted           → auto-create ~/.focusflow/tasks/<slug>/workspace/
 	root, err := flowRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -275,7 +275,7 @@ func addTask(args []string) int {
 	} else {
 		fmt.Printf("Created task %q in project %q\n", slug, *project)
 	}
-	fmt.Printf("Next: flow do %s\n", slug)
+	fmt.Printf("Next: focusflow do %s\n", slug)
 	return 0
 }
 

@@ -1,14 +1,14 @@
 package app
 
 import (
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 )
 
 // cmdPriority mutates a task or project's priority.
 //
-// Usage: flow priority <ref> high|medium|low
+// Usage: focusflow priority <ref> high|medium|low
 func cmdPriority(args []string) int {
 	fs := flagSet("priority")
 	if err := fs.Parse(args); err != nil {

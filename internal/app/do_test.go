@@ -1,8 +1,8 @@
 package app
 
 import (
-	"flow/internal/flowdb"
-	"flow/internal/iterm"
+	"focusflow/internal/flowdb"
+	"focusflow/internal/iterm"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -201,10 +201,10 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 	}
 }
 
-// TestCmdDoSpawnsClaudeNotFlowde pins the post-flowde contract: `flow do`
+// TestCmdDoSpawnsClaudeNotFlowde pins the post-flowde contract: `focusflow do`
 // shells out to `claude` directly (no wrapper) for both the fresh
 // bootstrap and the resume paths. Skill freshness is now an explicit
-// `flow skill update` step, not an implicit per-launch refresh.
+// `focusflow skill update` step, not an implicit per-launch refresh.
 func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "wrap-fresh")
@@ -288,8 +288,8 @@ func TestBuildBootstrapPromptForPlaybookRun(t *testing.T) {
 	if !strings.Contains(got, "playbook `p`") {
 		t.Errorf("expected playbook reference, got:\n%s", got)
 	}
-	if !strings.Contains(got, "flow show playbook p") {
-		t.Errorf("expected flow show playbook command, got:\n%s", got)
+	if !strings.Contains(got, "focusflow show playbook p") {
+		t.Errorf("expected focusflow show playbook command, got:\n%s", got)
 	}
 	if !strings.Contains(got, "snapshotted from the playbook") {
 		t.Errorf("expected snapshot framing, got:\n%s", got)
@@ -304,8 +304,8 @@ func TestBuildBootstrapPromptForRegularTask(t *testing.T) {
 	if strings.Contains(got, "playbook") {
 		t.Errorf("regular task prompt shouldn't mention playbook:\n%s", got)
 	}
-	if !strings.Contains(got, "flow show task") {
-		t.Errorf("regular task prompt should mention flow show task:\n%s", got)
+	if !strings.Contains(got, "focusflow show task") {
+		t.Errorf("regular task prompt should mention focusflow show task:\n%s", got)
 	}
 }
 
@@ -401,7 +401,7 @@ func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 	if !strings.Contains(script, "playbook `tri`") {
 		t.Errorf("expected playbook prompt variant in spawn script, got:\n%s", script)
 	}
-	if !strings.Contains(script, "flow show playbook tri") {
-		t.Errorf("expected 'flow show playbook tri' in spawn script, got:\n%s", script)
+	if !strings.Contains(script, "focusflow show playbook tri") {
+		t.Errorf("expected 'focusflow show playbook tri' in spawn script, got:\n%s", script)
 	}
 }

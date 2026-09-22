@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"database/sql"
 	"errors"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// cmdWorkdir dispatches `flow workdir list|add|remove|scan`.
+// cmdWorkdir dispatches `focusflow workdir list|add|remove|scan`.
 func cmdWorkdir(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: workdir requires a subcommand (list|add|remove|scan)")
@@ -36,7 +36,7 @@ func cmdWorkdir(args []string) int {
 	}
 }
 
-// openFlowDBForWorkdir opens the flow DB and returns (db, rc). On error, it
+// openFlowDBForWorkdir opens the focusflow DB and returns (db, rc). On error, it
 // prints and returns a non-nil error rc.
 func openFlowDBForWorkdir() (*sql.DB, int) {
 	dbPath, err := flowDBPath()

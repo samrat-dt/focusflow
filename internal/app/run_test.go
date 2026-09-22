@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 )
 
 func TestRunSlugBasic(t *testing.T) {
@@ -66,7 +66,7 @@ func TestRunSlugSecondCollision(t *testing.T) {
 
 func TestRunSlugUTCNormalization(t *testing.T) {
 	db := openTempDB(t)
-	loc, _ := time.LoadLocation("Asia/Kolkata") // UTC+5:30
+	loc, _ := time.LoadLocation("Asia/Kolkata")        // UTC+5:30
 	local := time.Date(2026, 4, 30, 16, 0, 45, 0, loc) // 10:30 UTC
 	got, err := generateRunSlug(db, "p", local)
 	if err != nil {

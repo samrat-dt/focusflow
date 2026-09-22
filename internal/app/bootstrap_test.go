@@ -44,10 +44,10 @@ func TestEncodeCwdForClaude(t *testing.T) {
 	}{
 		// Plain path — only slashes transform.
 		{"/Users/alice/code/myapp", "-Users-alice-code-myapp"},
-		// Dotfile segment: `.flow` becomes `-flow`, producing a double
+		// Dotfile segment: `.focusflow` becomes `-focusflow`, producing a double
 		// dash after `alice`.
-		{"/Users/alice/.flow/tasks/add-oauth/workspace",
-			"-Users-alice--flow-tasks-add-oauth-workspace"},
+		{"/Users/alice/.focusflow/tasks/add-oauth/workspace",
+			"-Users-alice--focusflow-tasks-add-oauth-workspace"},
 		// Underscores in a path segment also transform — observed on
 		// Terraform module paths with numeric prefixes.
 		{"/Users/alice/monorepo/tf/modules/1_input_instance/application_gcp",

@@ -3,7 +3,7 @@ package app
 import (
 	"bytes"
 	"database/sql"
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// withTempFlowRoot points FLOW_ROOT at a fresh tempdir and returns the
-// root. It does NOT open flow.db — callers that need a live DB should
+// withTempFlowRoot points FOCUSFLOW_ROOT at a fresh tempdir and returns the
+// root. It does NOT open focusflow.db — callers that need a live DB should
 // use showListEditDB(t) which also creates the standard subdirs.
 //
 // This single-value form is shared across Phase 2 test files (agent A's
@@ -22,13 +22,13 @@ import (
 func withTempFlowRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("FLOW_ROOT", dir)
+	t.Setenv("FOCUSFLOW_ROOT", dir)
 	return dir
 }
 
 // showListEditDB is the test harness used by cmd_show, cmd_list, and
-// cmd_edit tests. It sets FLOW_ROOT, creates projects/ and tasks/
-// subtrees, opens flow.db, and returns (root, db).
+// cmd_edit tests. It sets FOCUSFLOW_ROOT, creates projects/ and tasks/
+// subtrees, opens focusflow.db, and returns (root, db).
 func showListEditDB(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	dir := withTempFlowRoot(t)
@@ -37,7 +37,7 @@ func showListEditDB(t *testing.T) (string, *sql.DB) {
 			t.Fatalf("mkdir: %v", err)
 		}
 	}
-	db, err := flowdb.OpenDB(filepath.Join(dir, "flow.db"))
+	db, err := flowdb.OpenDB(filepath.Join(dir, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
 	}
@@ -127,8 +127,8 @@ func TestCmdShowTaskFloating(t *testing.T) {
 func TestCmdShowTaskDefaultsFromEnv(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "env-task", "E", "backlog", "medium", filepath.Join(root, "x"), nil)
-	os.Setenv("FLOW_TASK", "env-task")
-	t.Cleanup(func() { os.Unsetenv("FLOW_TASK") })
+	os.Setenv("FOCUSFLOW_TASK", "env-task")
+	t.Cleanup(func() { os.Unsetenv("FOCUSFLOW_TASK") })
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"task"}); rc != 0 {
 			t.Errorf("rc=%d", rc)
@@ -141,13 +141,13 @@ func TestCmdShowTaskDefaultsFromEnv(t *testing.T) {
 
 func TestCmdShowTaskMissingDefault(t *testing.T) {
 	_, _ = showListEditDB(t)
-	os.Unsetenv("FLOW_TASK")
+	os.Unsetenv("FOCUSFLOW_TASK")
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"task"}); rc != 1 {
 			t.Errorf("rc=%d, want 1", rc)
 		}
 	})
-	if !strings.Contains(out, "$FLOW_TASK") {
+	if !strings.Contains(out, "$FOCUSFLOW_TASK") {
 		t.Errorf("missing env hint; out=%q", out)
 	}
 }
@@ -309,8 +309,8 @@ func TestCmdShowProjectHappyPath(t *testing.T) {
 func TestCmdShowProjectDefaultsFromEnv(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertProject(t, db, "envproj", "E", filepath.Join(root, "x"), "medium")
-	os.Setenv("FLOW_PROJECT", "envproj")
-	t.Cleanup(func() { os.Unsetenv("FLOW_PROJECT") })
+	os.Setenv("FOCUSFLOW_PROJECT", "envproj")
+	t.Cleanup(func() { os.Unsetenv("FOCUSFLOW_PROJECT") })
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"project"}); rc != 0 {
 			t.Errorf("rc=%d", rc)
@@ -444,8 +444,8 @@ func TestCmdShowTaskConfigurableStaleness(t *testing.T) {
 		t.Errorf("should not be stale at default threshold; out=%q", out)
 	}
 
-	// Set FLOW_STALE_DAYS=1 — should now show stale marker.
-	t.Setenv("FLOW_STALE_DAYS", "1")
+	// Set FOCUSFLOW_STALE_DAYS=1 — should now show stale marker.
+	t.Setenv("FOCUSFLOW_STALE_DAYS", "1")
 	out2 := captureStdout(t, func() {
 		if rc := cmdShow([]string{"task", "cfg-task"}); rc != 0 {
 			t.Errorf("rc=%d", rc)

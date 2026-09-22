@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 )
 
-// cmdRun handles `flow run <subcommand>`. Currently only `run playbook <slug>` is supported.
+// cmdRun handles `focusflow run <subcommand>`. Currently only `run playbook <slug>` is supported.
 func cmdRun(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: run requires a subcommand (playbook)")

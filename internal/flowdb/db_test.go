@@ -8,7 +8,7 @@ import (
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "flow.db")
+	path := filepath.Join(t.TempDir(), "focusflow.db")
 	db, err := OpenDB(path)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
@@ -49,7 +49,7 @@ func TestOpenDBCreatesSchema(t *testing.T) {
 }
 
 func TestOpenDBIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "flow.db")
+	path := filepath.Join(t.TempDir(), "focusflow.db")
 	db1, err := OpenDB(path)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
@@ -159,7 +159,7 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 }
 
 // TestOpenDBOnPreMigrationDB simulates an existing user upgrading from a
-// pre-feat/playbooks flow.db: tasks table exists but lacks the kind and
+// pre-feat/playbooks focusflow.db: tasks table exists but lacks the kind and
 // playbook_slug columns. OpenDB must apply migrations cleanly without
 // CREATE INDEX failing on the missing columns.
 //
@@ -168,7 +168,7 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 // runMigrations gets a chance to ALTER TABLE.
 func TestOpenDBOnPreMigrationDB(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "flow.db")
+	dbPath := filepath.Join(dir, "focusflow.db")
 
 	// Create a "pre-migration" DB by hand: just the original tasks schema,
 	// no kind/playbook_slug columns, no playbooks table.
@@ -236,7 +236,7 @@ func TestOpenDBOnPreMigrationDB(t *testing.T) {
 
 func TestPlaybooksTableExists(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "flow.db")
+	dbPath := filepath.Join(dir, "focusflow.db")
 	db, err := OpenDB(dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestPlaybooksTableExists(t *testing.T) {
 
 func TestMigrationAddsTasksKindAndPlaybookSlug(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "flow.db")
+	dbPath := filepath.Join(dir, "focusflow.db")
 	db, err := OpenDB(dbPath)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
@@ -315,7 +315,7 @@ func TestMigrationAddsTasksKindAndPlaybookSlug(t *testing.T) {
 
 func TestPlaybookCRUD(t *testing.T) {
 	dir := t.TempDir()
-	db, err := OpenDB(filepath.Join(dir, "flow.db"))
+	db, err := OpenDB(filepath.Join(dir, "focusflow.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestPlaybookCRUD(t *testing.T) {
 
 func TestTaskWithKindAndPlaybookSlug(t *testing.T) {
 	dir := t.TempDir()
-	db, err := OpenDB(filepath.Join(dir, "flow.db"))
+	db, err := OpenDB(filepath.Join(dir, "focusflow.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestTaskWithKindAndPlaybookSlug(t *testing.T) {
 
 func TestMigrationIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "flow.db")
+	dbPath := filepath.Join(dir, "focusflow.db")
 	db, err := OpenDB(dbPath)
 	if err != nil {
 		t.Fatal(err)

@@ -3,8 +3,8 @@ package app
 import (
 	"database/sql"
 	"errors"
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 )
@@ -30,12 +30,12 @@ work_dir: %s
 - *Fill in: signals that should change behavior or escalate.*
 
 ---
-*Run with ` + "`flow run playbook %s`" + `. Each run gets its own session
+*Run with ` + "`focusflow run playbook %s`" + `. Each run gets its own session
 and a snapshot of this brief at run time. Editing this file does not
 retroactively change past runs.*
 `
 
-// addPlaybook implements `flow add playbook "<name>" [flags]`.
+// addPlaybook implements `focusflow add playbook "<name>" [flags]`.
 func addPlaybook(args []string) int {
 	if len(args) == 0 || args[0] == "" {
 		fmt.Fprintln(os.Stderr, "error: add playbook requires a name")
@@ -144,6 +144,6 @@ func addPlaybook(args []string) int {
 	if projectSlug.Valid {
 		fmt.Printf("Project: %s\n", projectSlug.String)
 	}
-	fmt.Printf("Next: flow run playbook %s\n", slug)
+	fmt.Printf("Next: focusflow run playbook %s\n", slug)
 	return 0
 }

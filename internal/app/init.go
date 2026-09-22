@@ -1,42 +1,42 @@
 package app
 
 import (
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 )
 
-// flowRoot returns the root directory for flow state. Honors $FLOW_ROOT if
-// set, otherwise falls back to ~/.flow. The returned path is not guaranteed
-// to exist — callers that need it created should run `flow init` or create
+// flowRoot returns the root directory for focusflow state. Honors $FOCUSFLOW_ROOT if
+// set, otherwise falls back to ~/.focusflow. The returned path is not guaranteed
+// to exist — callers that need it created should run `focusflow init` or create
 // it themselves.
 func flowRoot() (string, error) {
-	if r := os.Getenv("FLOW_ROOT"); r != "" {
+	if r := os.Getenv("FOCUSFLOW_ROOT"); r != "" {
 		return r, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
-	return filepath.Join(home, ".flow"), nil
+	return filepath.Join(home, ".focusflow"), nil
 }
 
-// flowDBPath returns the absolute path to flow.db under the flow root.
+// flowDBPath returns the absolute path to focusflow.db under the focusflow root.
 // Returns a clear error if the data directory hasn't been initialized.
 func flowDBPath() (string, error) {
 	root, err := flowRoot()
 	if err != nil {
 		return "", err
 	}
-	dbPath := filepath.Join(root, "flow.db")
+	dbPath := filepath.Join(root, "focusflow.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("flow is not initialized — run `flow init` to set up %s", root)
+		return "", fmt.Errorf("focusflow is not initialized — run `focusflow init` to set up %s", root)
 	}
 	return dbPath, nil
 }
 
-// cmdInit creates ~/.flow/ (or $FLOW_ROOT), initializes flow.db, installs
+// cmdInit creates ~/.focusflow/ (or $FOCUSFLOW_ROOT), initializes focusflow.db, installs
 // the skill. Idempotent — re-running is safe.
 func cmdInit(args []string) int {
 	fs := flagSet("init")
@@ -55,9 +55,9 @@ func cmdInit(args []string) int {
 	}
 
 	// Create the top-level tree. `projects/` and `tasks/` are parents for
-	// per-project and per-task subdirectories created later by `flow add`.
+	// per-project and per-task subdirectories created later by `focusflow add`.
 	// `kb/` holds 5 knowledge-base files (user/org/products/processes/
-	// business) that the skill appends to on the fly and that `flow show
+	// business) that the skill appends to on the fly and that `focusflow show
 	// task`/`show project` lists for execution sessions to read.
 	for _, d := range []string{
 		root,
@@ -83,8 +83,8 @@ func cmdInit(args []string) int {
 		}
 	}
 
-	// Open (and implicitly initialize) flow.db.
-	dbPath := filepath.Join(root, "flow.db")
+	// Open (and implicitly initialize) focusflow.db.
+	dbPath := filepath.Join(root, "focusflow.db")
 	db, err := flowdb.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
@@ -93,7 +93,7 @@ func cmdInit(args []string) int {
 	db.Close()
 
 	// Install the skill idempotently. Skip if already present; we never
-	// overwrite on init (use `flow skill update` for that).
+	// overwrite on init (use `focusflow skill update` for that).
 	skillPath, err := skillInstallPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -111,7 +111,7 @@ func cmdInit(args []string) int {
 		if err := writeSkillVersion(Version); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
 		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
+		fmt.Printf("installed focusflow skill to %s\n", skillPath)
 	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
 		return 1
@@ -125,12 +125,12 @@ func cmdInit(args []string) int {
 		fmt.Printf("installed SessionStart hook in %s\n", settings)
 	}
 
-	fmt.Printf("flow initialized at %s\n", root)
-	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)
+	fmt.Printf("focusflow initialized at %s\n", root)
+	fmt.Println(`Next: focusflow add project "My first project" --work-dir <path>`)
 	return 0
 }
 
-// kbSeed describes one knowledge-base file to create on `flow init`.
+// kbSeed describes one knowledge-base file to create on `focusflow init`.
 type kbSeed struct {
 	filename string
 	stub     string
@@ -145,8 +145,8 @@ func kbSeeds() []kbSeed {
 	return []kbSeed{
 		{"user.md", `# User
 
-Durable facts about the person using flow — role, preferences, working
-style, constraints, availability. The flow skill appends entries here
+Durable facts about the person using focusflow — role, preferences, working
+style, constraints, availability. The focusflow skill appends entries here
 automatically when the user shares something in conversation.
 
 <!-- Entries are appended as: "- YYYY-MM-DD — <short quote or paraphrase>" -->
@@ -154,28 +154,28 @@ automatically when the user shares something in conversation.
 		{"org.md", `# Organization
 
 The user's company, team, structure, stakeholders, reporting lines, and
-people the user interacts with. Appended by the flow skill on the fly.
+people the user interacts with. Appended by the focusflow skill on the fly.
 
 <!-- Entries are appended as: "- YYYY-MM-DD — <short quote or paraphrase>" -->
 `},
 		{"products.md", `# Products
 
 What the org ships — product lines, modules, features, release cadence,
-major capabilities. Appended by the flow skill on the fly.
+major capabilities. Appended by the focusflow skill on the fly.
 
 <!-- Entries are appended as: "- YYYY-MM-DD — <short quote or paraphrase>" -->
 `},
 		{"processes.md", `# Processes
 
 How the org works — tools, conventions, rituals, review rules, on-call,
-deploy flows, meeting cadences. Appended by the flow skill on the fly.
+deploy flows, meeting cadences. Appended by the focusflow skill on the fly.
 
 <!-- Entries are appended as: "- YYYY-MM-DD — <short quote or paraphrase>" -->
 `},
 		{"business.md", `# Business
 
 Customers, business model, revenue, deals, market positioning, contract
-structure, pricing. Appended by the flow skill on the fly.
+structure, pricing. Appended by the focusflow skill on the fly.
 
 <!-- Entries are appended as: "- YYYY-MM-DD — <short quote or paraphrase>" -->
 `},
@@ -183,7 +183,7 @@ structure, pricing. Appended by the flow skill on the fly.
 }
 
 // kbFiles returns the absolute paths of all existing KB files under the
-// given flow root, in the canonical order (user, org, products, processes,
+// given focusflow root, in the canonical order (user, org, products, processes,
 // business). Paths for files that don't exist on disk are omitted — users
 // can delete any kb file they don't care about without breaking show.
 func kbFiles(root string) []string {

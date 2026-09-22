@@ -1,4 +1,4 @@
-BINARY   := flow
+BINARY   := focusflow
 REPO_DIR := $(shell pwd)
 
 # VERSION is injected into the binary via -ldflags. Defaults to "dev";
@@ -26,7 +26,7 @@ install: build
 	./$(BINARY) skill install --force
 	@echo ""
 	@echo "Done. Run 'source ~/.zshrc' or open a new terminal."
-	@echo "Then run 'flow init' to create ~/.flow/ and the database."
+	@echo "Then run 'focusflow init' to create ~/.focusflow/ and the database."
 
 uninstall:
 	./$(BINARY) skill uninstall

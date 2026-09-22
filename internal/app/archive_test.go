@@ -2,26 +2,26 @@ package app
 
 import (
 	"database/sql"
-	"flow/internal/flowdb"
+	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// setupArchiveTestEnv creates a tempdir, sets FLOW_ROOT, initializes
-// flow.db, and returns the opened handle. The db handle is closed on
+// setupArchiveTestEnv creates a tempdir, sets FOCUSFLOW_ROOT, initializes
+// focusflow.db, and returns the opened handle. The db handle is closed on
 // cleanup. We intentionally close the db before invoking the cmd*
 // functions so that the production code path (which opens its own db
 // via flowDBPath) is exercised end-to-end.
 func setupArchiveTestEnv(t *testing.T) (root string) {
 	t.Helper()
 	root = t.TempDir()
-	t.Setenv("FLOW_ROOT", root)
+	t.Setenv("FOCUSFLOW_ROOT", root)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir root: %v", err)
 	}
 	// Initialize the DB by opening it once.
-	db, err := flowdb.OpenDB(filepath.Join(root, "flow.db"))
+	db, err := flowdb.OpenDB(filepath.Join(root, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -31,7 +31,7 @@ func setupArchiveTestEnv(t *testing.T) (root string) {
 
 func reopenArchiveTestDB(t *testing.T, root string) *sql.DB {
 	t.Helper()
-	db, err := flowdb.OpenDB(filepath.Join(root, "flow.db"))
+	db, err := flowdb.OpenDB(filepath.Join(root, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("reopen db: %v", err)
 	}

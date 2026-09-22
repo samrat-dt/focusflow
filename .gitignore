@@ -1,9 +1,9 @@
-/flow
+/focusflow
 /flowde
-/bin/flow
+/bin/focusflow
 *.db
 
-# flow's own data tree accidentally created in the repo root when
-# running the CLI with a relative FLOW_ROOT.
+# focusflow's own data tree accidentally created in the repo root when
+# running the CLI with a relative FOCUSFLOW_ROOT.
 /projects/
 /tasks/

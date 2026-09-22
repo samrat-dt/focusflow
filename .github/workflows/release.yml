@@ -15,9 +15,9 @@ jobs:
       matrix:
         include:
           - goarch: arm64
-            asset: flow-darwin-arm64
+            asset: focusflow-darwin-arm64
           - goarch: amd64
-            asset: flow-darwin-amd64
+            asset: focusflow-darwin-amd64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,14 +49,14 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: |
-          shasum -a 256 flow-darwin-* > SHA256SUMS
+          shasum -a 256 focusflow-darwin-* > SHA256SUMS
           cat SHA256SUMS
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/flow-darwin-arm64
-            dist/flow-darwin-amd64
+            dist/focusflow-darwin-arm64
+            dist/focusflow-darwin-amd64
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true

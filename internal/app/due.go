@@ -1,8 +1,8 @@
 package app
 
 import (
-	"flow/internal/flowdb"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
 	"strings"
 	"time"
@@ -10,8 +10,8 @@ import (
 
 // cmdDue sets or clears a task's due date.
 //
-//	flow due <ref> <date>        — set due date
-//	flow due <ref> --clear       — remove due date
+//	focusflow due <ref> <date>        — set due date
+//	focusflow due <ref> --clear       — remove due date
 func cmdDue(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: due requires a task ref")

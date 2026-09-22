@@ -16,20 +16,20 @@ var embeddedSkill []byte
 // hooks.SessionStart so install/uninstall can idempotently find it.
 // Keep it stable — changing this string would orphan existing
 // installations.
-const hookCommand = "flow hook session-start"
+const hookCommand = "focusflow hook session-start"
 
 // hookMatcher is the SessionStart matcher string — fires on both
 // fresh startup and `claude --resume`.
 const hookMatcher = "startup|resume"
 
 // skillInstallPath returns the absolute path where the skill should be
-// installed on disk: ~/.claude/skills/flow/SKILL.md.
+// installed on disk: ~/.claude/skills/focusflow/SKILL.md.
 func skillInstallPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
-	return filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"), nil
+	return filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md"), nil
 }
 
 // skillVersionPath returns the sidecar file that records which binary
@@ -82,8 +82,8 @@ func userSettingsPath() (string, error) {
 
 // maybeAutoUpgradeSkill checks the recorded skill version against the
 // running binary's version and, if they differ, refreshes the skill +
-// SessionStart hook. Designed to run on every flow invocation so the
-// user gets a self-healing upgrade flow after replacing the binary.
+// SessionStart hook. Designed to run on every focusflow invocation so the
+// user gets a self-healing upgrade focusflow after replacing the binary.
 //
 // The check is intentionally conservative — it does nothing when:
 //   - The binary is a "dev" build (Version == "dev"). Local devs use
@@ -116,10 +116,10 @@ func maybeAutoUpgradeSkill() {
 	}
 	_ = writeSkillVersion(Version)
 	_, _ = installSessionStartHook()
-	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
+	fmt.Fprintf(os.Stderr, "focusflow: upgraded skill to %s\n", Version)
 }
 
-// cmdSkill dispatches `flow skill install|uninstall|update`.
+// cmdSkill dispatches `focusflow skill install|uninstall|update`.
 func cmdSkill(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: skill requires a subcommand (install|uninstall|update)")
@@ -170,7 +170,7 @@ func skillInstall(args []string, forceDefault bool) int {
 	if err := writeSkillVersion(Version); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
 	}
-	fmt.Printf("installed flow skill to %s\n", dest)
+	fmt.Printf("installed focusflow skill to %s\n", dest)
 
 	if *skipHook {
 		fmt.Println("--skip-hook: leaving ~/.claude/settings.json alone")
@@ -179,7 +179,7 @@ func skillInstall(args []string, forceDefault bool) int {
 	if added, err := installSessionStartHook(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 		// Non-fatal: the skill is still usable without the hook; the
-		// user can wire it manually. Return 0 so `flow init` doesn't
+		// user can wire it manually. Return 0 so `focusflow init` doesn't
 		// fail on a settings.json quirk.
 		return 0
 	} else if added {
@@ -204,13 +204,13 @@ func skillUninstall(args []string) int {
 	}
 	skillDir := filepath.Dir(dest)
 	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		fmt.Printf("flow skill not installed at %s — nothing to do\n", skillDir)
+		fmt.Printf("focusflow skill not installed at %s — nothing to do\n", skillDir)
 	} else {
 		if err := os.RemoveAll(skillDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: remove %s: %v\n", skillDir, err)
 			return 1
 		}
-		fmt.Printf("uninstalled flow skill from %s\n", skillDir)
+		fmt.Printf("uninstalled focusflow skill from %s\n", skillDir)
 	}
 
 	if *keepHook {
@@ -227,7 +227,7 @@ func skillUninstall(args []string) int {
 	return 0
 }
 
-// installSessionStartHook idempotently adds the flow SessionStart hook
+// installSessionStartHook idempotently adds the focusflow SessionStart hook
 // to ~/.claude/settings.json. Returns (added, err) where added is true
 // if the settings file was actually modified (false if the hook was
 // already present).
@@ -235,7 +235,7 @@ func skillUninstall(args []string) int {
 // The merge preserves all existing top-level keys, all existing hooks
 // under other events (PreToolUse, etc.), and all existing SessionStart
 // entries. It only appends a new entry if no existing SessionStart
-// entry references `flow hook session-start`.
+// entry references `focusflow hook session-start`.
 func installSessionStartHook() (bool, error) {
 	path, err := userSettingsPath()
 	if err != nil {
@@ -310,7 +310,7 @@ func installSessionStartHook() (bool, error) {
 }
 
 // uninstallSessionStartHook removes any SessionStart entry whose inner
-// hooks reference the flow hook command. Returns (removed, err) where
+// hooks reference the focusflow hook command. Returns (removed, err) where
 // removed is true if the settings file was actually modified.
 func uninstallSessionStartHook() (bool, error) {
 	path, err := userSettingsPath()

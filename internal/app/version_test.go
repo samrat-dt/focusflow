@@ -22,7 +22,7 @@ func TestSkillInstallWritesVersionSidecar(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	got, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "flow", "VERSION"))
+	got, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "focusflow", "VERSION"))
 	if err != nil {
 		t.Fatalf("read VERSION: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestMaybeAutoUpgradeUpgradesOnMismatch(t *testing.T) {
 		t.Fatalf("install rc=%d", rc)
 	}
 	// Stomp on the on-disk skill so we can detect the refresh.
-	skillPath := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	skillPath := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	if err := os.WriteFile(skillPath, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestMaybeAutoUpgradeIdempotent(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	skillPath := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	skillPath := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	before, _ := os.Stat(skillPath)
 
 	// Same version → no rewrite.
@@ -98,7 +98,7 @@ func TestMaybeAutoUpgradeSkipsForDev(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	skillPath := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+	skillPath := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	if err := os.WriteFile(skillPath, []byte("dev edits"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestMaybeAutoUpgradeSkipsWhenSkillMissing(t *testing.T) {
 	// No install, no skill on disk → should be a no-op.
 	maybeAutoUpgradeSkill()
 
-	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude", "skills", "flow", "SKILL.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude", "skills", "focusflow", "SKILL.md")); !os.IsNotExist(err) {
 		t.Errorf("auto-upgrade created a skill file when none existed; err=%v", err)
 	}
 }
