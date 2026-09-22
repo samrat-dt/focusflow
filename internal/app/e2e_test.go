@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
 	"os"
@@ -226,5 +227,67 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	}
 	if wd == nil {
 		t.Fatal("GetWorkdir returned nil for auto-registered path")
+	}
+}
+
+// TestE2E_ControlCenterExactListTasksCall proves, end to end, that the
+// exact call control-center's lib/flow-reader.js makes —
+// `focusflow list tasks --format json --include-done --include-archived
+// --kind all` — parses cleanly and produces every field readTasks()
+// expects, with no missing/mismatched field, against a realistic mix of
+// task states (active, archived, done).
+func TestE2E_ControlCenterExactListTasksCall(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+
+	step := func(name string, rc int) {
+		t.Helper()
+		if rc != 0 {
+			t.Fatalf("%s: rc=%d", name, rc)
+		}
+	}
+
+	step("add project", cmdAdd([]string{"project", "Dash", "--slug", "dash", "--work-dir", wd}))
+	step("add task ship-it", cmdAdd([]string{"task", "Ship it", "--slug", "ship-it", "--project", "dash", "--work-dir", wd, "--priority", "high", "--tag", "urgent"}))
+	step("add task old-one", cmdAdd([]string{"task", "Old one", "--slug", "old-one", "--work-dir", wd}))
+	step("archive old-one", cmdArchive([]string{"old-one"}))
+	step("add task finished", cmdAdd([]string{"task", "Finished", "--slug", "finished", "--work-dir", wd}))
+	step("update finished done", cmdUpdate([]string{"task", "finished", "--status", "done"}))
+
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"tasks", "--format", "json", "--include-done", "--include-archived", "--kind", "all"})
+		if rc != 0 {
+			t.Fatalf("control-center's exact call failed: rc=%d", rc)
+		}
+	})
+
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("control-center's exact call did not produce parseable JSON: %v\noutput:\n%s", err, out)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (ship-it, old-one archived, finished done), got %d: %v", len(rows), rows)
+	}
+
+	// readTasks() in control-center's lib/flow-reader.js reads: slug,
+	// name, project, status, priority, tags, live, archived. Confirm
+	// every one is present and correctly typed on every row, not just
+	// the first.
+	requiredKeys := []string{"slug", "name", "project", "status", "priority", "tags", "live", "archived"}
+	for _, row := range rows {
+		for _, k := range requiredKeys {
+			if _, ok := row[k]; !ok {
+				t.Errorf("row %v missing key %q required by control-center's readTasks()", row["slug"], k)
+			}
+		}
+		if _, ok := row["tags"].([]any); !ok {
+			t.Errorf("row %v: tags must be a JSON array, got %T", row["slug"], row["tags"])
+		}
+		if _, ok := row["live"].(bool); !ok {
+			t.Errorf("row %v: live must be a JSON boolean, got %T", row["slug"], row["live"])
+		}
+		if _, ok := row["archived"].(bool); !ok {
+			t.Errorf("row %v: archived must be a JSON boolean, got %T", row["slug"], row["archived"])
+		}
 	}
 }
