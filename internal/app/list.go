@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"focusflow/internal/flowdb"
 	"os"
@@ -25,6 +26,8 @@ func cmdList(args []string) int {
 		return listPlaybooksCmd(args[1:])
 	case "runs":
 		return listRunsCmd(args[1:])
+	case "tags":
+		return listTagsCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -39,7 +42,18 @@ func listTasksCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
+	format := fs.String("format", "table", "table|json|tsv")
+	var tagFilter stringSliceFlag
+	fs.Var(&tagFilter, "tag", "filter to tasks having this tag (repeatable; AND semantics)")
+	noColor := fs.Bool("no-color", false, "disable ANSI color/emoji markers in table output")
+	noTruncate := fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *format {
+	case "table", "json", "tsv":
+	default:
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
 
@@ -48,6 +62,7 @@ func listTasksCmd(args []string) int {
 		Project:         *project,
 		Priority:        *priority,
 		IncludeArchived: *includeArchived,
+		Tags:            []string(tagFilter),
 	}
 	// Default kind is "regular"; "all" disables the kind filter.
 	if *kind != "all" {
@@ -85,15 +100,25 @@ func listTasksCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if len(tasks) == 0 {
-		fmt.Println("(no tasks)")
-		return 0
-	}
 
 	root, err := flowRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+
+	// json/tsv must stay valid, parseable output even when empty (an
+	// empty JSON array, or just the TSV header) — control-center parses
+	// this unconditionally, so "(no tasks)" prose would break it.
+	if *format == "json" {
+		return renderTasksJSON(tasks, db)
+	}
+	if *format == "tsv" {
+		return renderTasksTSV(tasks, db, root)
+	}
+	if len(tasks) == 0 {
+		fmt.Println("(no tasks)")
+		return 0
 	}
 
 	now := time.Now()
@@ -113,6 +138,11 @@ func listTasksCmd(args []string) int {
 		done     bool
 		mirror   bool
 	}
+	warnPrefix, boltPrefix := "⚠ ", "⚡ "
+	if *noColor {
+		warnPrefix, boltPrefix = "", ""
+	}
+
 	var rows []row
 	maxIdent := 0
 	for _, t := range tasks {
@@ -146,9 +176,9 @@ func listTasksCmd(args []string) int {
 		if diff, ok := daysUntilDue(t, now); ok {
 			switch {
 			case diff < 0:
-				r.due = fmt.Sprintf("⚠ overdue %dd", -diff)
+				r.due = fmt.Sprintf("%soverdue %dd", warnPrefix, -diff)
 			case diff == 0:
-				r.due = "⚡ due today"
+				r.due = boltPrefix + "due today"
 			case diff == 1:
 				r.due = "due tomorrow"
 			default:
@@ -158,7 +188,7 @@ func listTasksCmd(args []string) int {
 
 		if t.Status == "in-progress" && !t.ArchivedAt.Valid {
 			if days, ok := taskStaleness(t, root); ok {
-				r.stale = fmt.Sprintf("⚠ stale (%dd)", days)
+				r.stale = fmt.Sprintf("%sstale (%dd)", warnPrefix, days)
 			}
 		}
 		if t.WaitingOn.Valid && t.WaitingOn.String != "" {
@@ -169,7 +199,7 @@ func listTasksCmd(args []string) int {
 
 	// Render each row. We align the ident column across all rows.
 	identW := maxIdent
-	if identW > 40 {
+	if !*noTruncate && identW > 40 {
 		identW = 40
 	}
 	if identW < 10 {
@@ -183,7 +213,7 @@ func listTasksCmd(args []string) int {
 		sb.WriteString("] ")
 		sb.WriteString(fmt.Sprintf("%-6s ", r.pri))
 		ident := r.ident
-		if len(ident) > identW {
+		if !*noTruncate && len(ident) > identW {
 			ident = ident[:identW]
 		}
 		sb.WriteString(fmt.Sprintf("%-*s ", identW, ident))
@@ -220,11 +250,194 @@ func listTasksCmd(args []string) int {
 	return 0
 }
 
+// taskRowCommon computes the fields shared by JSON and TSV rendering
+// that require extra DB/process lookups beyond what's on the Task
+// struct itself: tags and liveness.
+type taskRowCommon struct {
+	tags []string
+	live bool
+}
+
+func buildTaskRowCommon(db *sql.DB, t *flowdb.Task) (taskRowCommon, error) {
+	tags, err := flowdb.ListTagsForTask(db, t.Slug)
+	if err != nil {
+		return taskRowCommon{}, err
+	}
+	live := t.SessionID.Valid && isSessionLive(t.SessionID.String)
+	return taskRowCommon{tags: tags, live: live}, nil
+}
+
+// autoRunDisplay renders the auto_run column exactly as flow does:
+// "" when never run, otherwise one of running|completed|dead.
+func autoRunDisplay(t *flowdb.Task) string {
+	if !t.AutoRunStatus.Valid {
+		return ""
+	}
+	return t.AutoRunStatus.String
+}
+
+// renderTasksJSON prints tasks as a JSON array matching live flow's
+// exact field set. Field names/order come from a live sample captured
+// during the focusflow-parity task; there is deliberately no "kind"
+// key, even though the Task struct has one — live flow never emits it.
+func renderTasksJSON(tasks []*flowdb.Task, db *sql.DB) int {
+	type jsonRow struct {
+		Slug     string   `json:"slug"`
+		Name     string   `json:"name"`
+		Status   string   `json:"status"`
+		Priority string   `json:"priority"`
+		Project  string   `json:"project"`
+		Live     bool     `json:"live"`
+		Updated  string   `json:"updated"`
+		Tags     []string `json:"tags"`
+		Archived bool     `json:"archived"`
+		AutoRun  string   `json:"auto_run"`
+		AgeDays  int      `json:"age_days"`
+	}
+	now := time.Now()
+	rows := make([]jsonRow, 0, len(tasks))
+	for _, t := range tasks {
+		common, err := buildTaskRowCommon(db, t)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		project := ""
+		if t.ProjectSlug.Valid {
+			project = t.ProjectSlug.String
+		}
+		tags := common.tags
+		if tags == nil {
+			tags = []string{}
+		}
+		rows = append(rows, jsonRow{
+			Slug: t.Slug, Name: t.Name, Status: t.Status, Priority: t.Priority,
+			Project: project, Live: common.live, Updated: t.UpdatedAt, Tags: tags,
+			Archived: t.ArchivedAt.Valid, AutoRun: autoRunDisplay(t),
+			AgeDays: daysInStatus(t, now),
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// renderTasksTSV prints tasks as tab-separated rows matching live
+// flow's exact TSV header/column order, captured from a live sample.
+func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
+	w := os.Stdout
+	fmt.Fprintln(w, strings.Join([]string{
+		"slug", "status", "priority", "project", "age_days", "due_in_days", "due_label",
+		"stale", "stale_days", "waiting_on", "assignee", "live", "auto_run", "auto_run_pid",
+		"archived", "tags",
+	}, "\t"))
+	now := time.Now()
+	for _, t := range tasks {
+		common, err := buildTaskRowCommon(db, t)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		project := ""
+		if t.ProjectSlug.Valid {
+			project = t.ProjectSlug.String
+		}
+		dueInDays, dueLabel := "", ""
+		if diff, ok := daysUntilDue(t, now); ok {
+			dueInDays = fmt.Sprintf("%d", diff)
+			switch {
+			case diff < 0:
+				dueLabel = "overdue"
+			case diff == 0:
+				dueLabel = "due today"
+			default:
+				dueLabel = "due"
+			}
+		}
+		stale, staleDays := "false", ""
+		if t.Status == "in-progress" && !t.ArchivedAt.Valid {
+			if days, ok := taskStaleness(t, root); ok {
+				stale = "true"
+				staleDays = fmt.Sprintf("%d", days)
+			}
+		}
+		waitingOn := ""
+		if t.WaitingOn.Valid {
+			waitingOn = t.WaitingOn.String
+		}
+		assignee := ""
+		if t.Assignee.Valid {
+			assignee = t.Assignee.String
+		}
+		pid := ""
+		if t.AutoRunPID.Valid {
+			pid = fmt.Sprintf("%d", t.AutoRunPID.Int64)
+		}
+		fmt.Fprintln(w, strings.Join([]string{
+			t.Slug, t.Status, t.Priority, project,
+			fmt.Sprintf("%d", daysInStatus(t, now)), dueInDays, dueLabel,
+			stale, staleDays, waitingOn, assignee,
+			fmt.Sprintf("%t", common.live), autoRunDisplay(t), pid,
+			fmt.Sprintf("%t", t.ArchivedAt.Valid), strings.Join(common.tags, ","),
+		}, "\t"))
+	}
+	return 0
+}
+
+// listTagsCmd implements `focusflow list tags` — every distinct tag in
+// use (across non-archived tasks) with its usage count.
+func listTagsCmd(args []string) int {
+	fs := flagSet("list tags")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	tags, err := flowdb.ListAllTags(db)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(tags) == 0 {
+		fmt.Println("(no tags)")
+		return 0
+	}
+	for _, tc := range tags {
+		fmt.Printf("  #%-20s %d task(s)\n", tc.Tag, tc.Count)
+	}
+	return 0
+}
+
 func listProjectsCmd(args []string) int {
 	fs := flagSet("list projects")
 	status := fs.String("status", "", "active|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
+	format := fs.String("format", "table", "table|json")
+	_ = fs.Bool("no-color", false, "disable color/emoji markers in table output")
+	noTruncate := fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *format {
+	case "table", "json":
+	case "tsv":
+		fmt.Fprintln(os.Stderr, "error: --format tsv is not supported for list projects")
+		return 2
+	default:
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json, got %q\n", *format)
 		return 2
 	}
 	filter := flowdb.ProjectFilter{
@@ -247,6 +460,9 @@ func listProjectsCmd(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if *format == "json" {
+		return renderProjectsJSON(projects, db)
 	}
 	if len(projects) == 0 {
 		fmt.Println("(no projects)")
@@ -287,7 +503,7 @@ func listProjectsCmd(args []string) int {
 			maxSlug = n
 		}
 	}
-	if maxSlug > 40 {
+	if !*noTruncate && maxSlug > 40 {
 		maxSlug = 40
 	}
 	if maxSlug < 10 {
@@ -305,7 +521,7 @@ func listProjectsCmd(args []string) int {
 			statusW = p.Status
 		}
 		slug := p.Slug
-		if len(slug) > maxSlug {
+		if !*noTruncate && len(slug) > maxSlug {
 			slug = slug[:maxSlug]
 		}
 
@@ -341,11 +557,59 @@ func listProjectsCmd(args []string) int {
 	return 0
 }
 
+// renderProjectsJSON prints projects as a JSON array. Field set is
+// derived from this command's own table output (slug, name, status,
+// priority, work_dir, task counts, archived) — no live-flow JSON sample
+// was captured for `list projects`, so this is a reasonable-effort
+// projection, not a byte-for-byte verified schema like `list tasks`.
+func renderProjectsJSON(projects []*flowdb.Project, db *sql.DB) int {
+	type jsonRow struct {
+		Slug     string `json:"slug"`
+		Name     string `json:"name"`
+		Status   string `json:"status"`
+		Priority string `json:"priority"`
+		WorkDir  string `json:"work_dir"`
+		Tasks    int    `json:"tasks"`
+		Archived bool   `json:"archived"`
+	}
+	rows := make([]jsonRow, 0, len(projects))
+	for _, p := range projects {
+		counts, err := projectTaskCounts(db, p.Slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		rows = append(rows, jsonRow{
+			Slug: p.Slug, Name: p.Name, Status: p.Status, Priority: p.Priority,
+			WorkDir: p.WorkDir, Tasks: counts.total, Archived: p.ArchivedAt.Valid,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func listPlaybooksCmd(args []string) int {
 	fs := flagSet("list playbooks")
 	project := fs.String("project", "", "filter by project slug")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
+	format := fs.String("format", "table", "table|json")
+	_ = fs.Bool("no-color", false, "disable color/emoji markers in table output")
+	_ = fs.Bool("no-truncate", false, "do not truncate long identifiers in table output")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *format {
+	case "table", "json":
+	case "tsv":
+		fmt.Fprintln(os.Stderr, "error: --format tsv is not supported for list playbooks")
+		return 2
+	default:
+		fmt.Fprintf(os.Stderr, "error: --format must be table|json, got %q\n", *format)
 		return 2
 	}
 
@@ -369,6 +633,9 @@ func listPlaybooksCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if *format == "json" {
+		return renderPlaybooksJSON(pbs)
+	}
 	if len(pbs) == 0 {
 		fmt.Println("(no playbooks)")
 		return 0
@@ -383,6 +650,39 @@ func listPlaybooksCmd(args []string) int {
 			archived = "  (archived)"
 		}
 		fmt.Printf("  %-40s %s%s\n", pb.Slug, proj, archived)
+	}
+	return 0
+}
+
+// renderPlaybooksJSON prints playbooks as a JSON array. Field set is
+// derived from this command's own table output (slug, name, project,
+// work_dir, archived) — no live-flow JSON sample was captured for
+// `list playbooks`, so this is a reasonable-effort projection, not a
+// byte-for-byte verified schema like `list tasks`.
+func renderPlaybooksJSON(pbs []*flowdb.Playbook) int {
+	type jsonRow struct {
+		Slug     string `json:"slug"`
+		Name     string `json:"name"`
+		Project  string `json:"project"`
+		WorkDir  string `json:"work_dir"`
+		Archived bool   `json:"archived"`
+	}
+	rows := make([]jsonRow, 0, len(pbs))
+	for _, pb := range pbs {
+		project := ""
+		if pb.ProjectSlug.Valid {
+			project = pb.ProjectSlug.String
+		}
+		rows = append(rows, jsonRow{
+			Slug: pb.Slug, Name: pb.Name, Project: project,
+			WorkDir: pb.WorkDir, Archived: pb.ArchivedAt.Valid,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode json: %v\n", err)
+		return 1
 	}
 	return 0
 }

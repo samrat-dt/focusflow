@@ -173,9 +173,13 @@ Read
   focusflow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   focusflow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
-                     [--include-archived]
+                     [--include-archived] [--include-done] [--kind regular|playbook_run|all]
+                     [--tag <t> ...] [--format table|json|tsv] [--no-color] [--no-truncate]
   focusflow list projects [--status active|done] [--include-archived]
+                     [--format table|json] [--no-color] [--no-truncate]
   focusflow list playbooks   [--project <slug>] [--include-archived]
+                     [--format table|json] [--no-color] [--no-truncate]
+  focusflow list tags
 
 Edit / mutate
   focusflow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at

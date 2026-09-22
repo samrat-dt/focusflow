@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
@@ -9,6 +10,106 @@ import (
 	"testing"
 	"time"
 )
+
+func TestListTasks_TagFilter(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "task-a", "A", "backlog", "medium", filepath.Join(root, "x"), nil)
+	insertTask(t, db, "task-b", "B", "backlog", "medium", filepath.Join(root, "x"), nil)
+	if err := flowdb.AddTag(db, "task-a", "urgent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.AddTag(db, "task-b", "backend"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--tag", "urgent"}); rc != 0 {
+			t.Fatalf("list tasks --tag urgent: rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "task-a") {
+		t.Errorf("expected task-a in output, got:\n%s", out)
+	}
+	if strings.Contains(out, "task-b") {
+		t.Errorf("expected task-b to be filtered out, got:\n%s", out)
+	}
+}
+
+func TestListTasks_NoTruncateShowsFullLongSlug(t *testing.T) {
+	root, db := showListEditDB(t)
+	longSlug := "a-very-long-task-slug-that-exceeds-forty-characters-easily"
+	insertTask(t, db, longSlug, "Long", "backlog", "medium", filepath.Join(root, "x"), nil)
+
+	truncated := captureStdout(t, func() {
+		cmdList([]string{"tasks"})
+	})
+	if strings.Contains(truncated, longSlug) {
+		t.Errorf("expected default output to truncate slug, but found the full slug:\n%s", truncated)
+	}
+
+	full := captureStdout(t, func() {
+		cmdList([]string{"tasks", "--no-truncate"})
+	})
+	if !strings.Contains(full, longSlug) {
+		t.Errorf("expected --no-truncate output to contain the full slug, got:\n%s", full)
+	}
+}
+
+func TestListTasks_FormatJSON_ExactFieldSet(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "proj", "Proj", filepath.Join(root, "x"), "medium")
+	insertTask(t, db, "task-a", "A", "backlog", "medium", filepath.Join(root, "x"), "proj")
+	if err := flowdb.AddTag(db, "task-a", "urgent"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"tasks", "--format", "json", "--include-done", "--include-archived", "--kind", "all"})
+		if rc != 0 {
+			t.Fatalf("list tasks --format json: rc=%d", rc)
+		}
+	})
+
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput was:\n%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+
+	wantKeys := []string{"slug", "name", "status", "priority", "project", "live", "updated", "tags", "archived", "auto_run", "age_days"}
+	if len(row) != len(wantKeys) {
+		t.Errorf("row has %d keys, want %d: got keys %v", len(row), len(wantKeys), keysOf(row))
+	}
+	for _, k := range wantKeys {
+		if _, ok := row[k]; !ok {
+			t.Errorf("missing expected key %q in row: %v", k, row)
+		}
+	}
+	if _, hasKind := row["kind"]; hasKind {
+		t.Error("row must NOT have a 'kind' key — live flow never emits one, even under --kind all")
+	}
+	if row["slug"] != "task-a" {
+		t.Errorf("slug = %v, want task-a", row["slug"])
+	}
+	if row["project"] != "proj" {
+		t.Errorf("project = %v, want proj", row["project"])
+	}
+	tags, ok := row["tags"].([]any)
+	if !ok || len(tags) != 1 || tags[0] != "urgent" {
+		t.Errorf("tags = %v, want [urgent]", row["tags"])
+	}
+}
+
+func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
 
 func TestCmdListTasksEmpty(t *testing.T) {
 	_, _ = showListEditDB(t)
@@ -258,6 +359,59 @@ func TestCmdListProjectsEmpty(t *testing.T) {
 	}
 }
 
+func TestListProjects_FormatJSON(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "proj-a", "Proj A", filepath.Join(root, "x"), "high")
+
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"projects", "--format", "json"})
+		if rc != 0 {
+			t.Fatalf("list projects --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput was:\n%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0]["slug"] != "proj-a" {
+		t.Errorf("slug = %v, want proj-a", rows[0]["slug"])
+	}
+	if rows[0]["priority"] != "high" {
+		t.Errorf("priority = %v, want high", rows[0]["priority"])
+	}
+}
+
+func TestListProjects_FormatRejectsTSV(t *testing.T) {
+	_, _ = showListEditDB(t)
+	rc := cmdList([]string{"projects", "--format", "tsv"})
+	if rc != 2 {
+		t.Errorf("list projects --format tsv: rc=%d, want 2 (unsupported)", rc)
+	}
+}
+
+func TestListProjects_NoTruncateShowsFullLongSlug(t *testing.T) {
+	root, db := showListEditDB(t)
+	longSlug := "a-very-long-project-slug-that-exceeds-forty-characters-easily"
+	insertProject(t, db, longSlug, "Long", filepath.Join(root, "x"), "medium")
+
+	truncated := captureStdout(t, func() {
+		cmdList([]string{"projects"})
+	})
+	if strings.Contains(truncated, longSlug) {
+		t.Errorf("expected default output to truncate slug, but found the full slug:\n%s", truncated)
+	}
+
+	full := captureStdout(t, func() {
+		cmdList([]string{"projects", "--no-truncate"})
+	})
+	if !strings.Contains(full, longSlug) {
+		t.Errorf("expected --no-truncate output to contain the full slug, got:\n%s", full)
+	}
+}
+
 func TestCmdListProjectsBreakdown(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertProject(t, db, "big", "Big", filepath.Join(root, "x"), "high")
@@ -366,6 +520,37 @@ func TestParseSince(t *testing.T) {
 		if !got.Equal(c.want) {
 			t.Errorf("parseSince(%q): got %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestListPlaybooks_FormatJSON(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		rc := cmdList([]string{"playbooks", "--format", "json"})
+		if rc != 0 {
+			t.Fatalf("list playbooks --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput was:\n%s", err, out)
+	}
+	if len(rows) != 1 || rows[0]["slug"] != "alpha" {
+		t.Errorf("rows = %v, want one row with slug alpha", rows)
+	}
+}
+
+func TestListPlaybooks_FormatRejectsTSV(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdList([]string{"playbooks", "--format", "tsv"})
+	if rc != 2 {
+		t.Errorf("list playbooks --format tsv: rc=%d, want 2 (unsupported)", rc)
 	}
 }
 
