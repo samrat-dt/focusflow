@@ -3,6 +3,7 @@ package flowdb
 import (
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -551,5 +552,128 @@ func TestUpsertMirroredTaskSkipsNativeCollision(t *testing.T) {
 	}
 	if tk.Name != "Native Task" || tk.Status != "in-progress" || tk.Source != "native" {
 		t.Errorf("native task was modified: %+v", tk)
+	}
+}
+
+func TestMigration_AddsAssigneeHarnessAutoRunTagsColumns(t *testing.T) {
+	db := openTempDB(t)
+
+	for _, col := range []string{"assignee", "harness", "auto_run_status", "auto_run_pid", "auto_run_started", "auto_run_finished", "auto_run_log"} {
+		has, err := columnExists(db, "tasks", col)
+		if err != nil {
+			t.Fatalf("columnExists(%s): %v", col, err)
+		}
+		if !has {
+			t.Errorf("expected tasks.%s to exist after migration", col)
+		}
+	}
+
+	var tableCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='task_tags'`).Scan(&tableCount); err != nil {
+		t.Fatalf("check task_tags table: %v", err)
+	}
+	if tableCount != 1 {
+		t.Errorf("expected task_tags table to exist, got count=%d", tableCount)
+	}
+
+	var idxCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_tasks_session_id'`).Scan(&idxCount); err != nil {
+		t.Fatalf("check idx_tasks_session_id: %v", err)
+	}
+	if idxCount != 1 {
+		t.Errorf("expected idx_tasks_session_id unique index to exist, got count=%d", idxCount)
+	}
+}
+
+func TestMigration_OpeningTwiceIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "focusflow.db")
+	db1, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("first OpenDB: %v", err)
+	}
+	db1.Close()
+	db2, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("second OpenDB (should be idempotent): %v", err)
+	}
+	db2.Close()
+}
+
+func TestSessionIDUniqueIndex_RejectsDuplicateSessionID(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "task-a", "A", "backlog", "medium", "/tmp", nil)
+	insertTask(t, db, "task-b", "B", "backlog", "medium", "/tmp", nil)
+	if _, err := db.Exec(`UPDATE tasks SET session_id='dup-session' WHERE slug='task-a'`); err != nil {
+		t.Fatalf("set session_id on task-a: %v", err)
+	}
+	_, err := db.Exec(`UPDATE tasks SET session_id='dup-session' WHERE slug='task-b'`)
+	if err == nil {
+		t.Fatal("expected UNIQUE constraint violation assigning the same session_id to a second task")
+	}
+}
+
+func TestTagCRUD(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "tagged-task", "Tagged", "backlog", "medium", "/tmp", nil)
+
+	if err := AddTag(db, "tagged-task", "urgent"); err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+	if err := AddTag(db, "tagged-task", "frontend"); err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+	// Adding the same tag twice must not error (idempotent).
+	if err := AddTag(db, "tagged-task", "urgent"); err != nil {
+		t.Fatalf("AddTag (duplicate): %v", err)
+	}
+
+	tags, err := ListTagsForTask(db, "tagged-task")
+	if err != nil {
+		t.Fatalf("ListTagsForTask: %v", err)
+	}
+	if got, want := tags, []string{"frontend", "urgent"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ListTagsForTask = %v, want %v", got, want)
+	}
+
+	all, err := ListAllTags(db)
+	if err != nil {
+		t.Fatalf("ListAllTags: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListAllTags: expected 2 distinct tags, got %d (%v)", len(all), all)
+	}
+
+	if err := RemoveTag(db, "tagged-task", "urgent"); err != nil {
+		t.Fatalf("RemoveTag: %v", err)
+	}
+	tags, _ = ListTagsForTask(db, "tagged-task")
+	if got, want := tags, []string{"frontend"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after RemoveTag: ListTagsForTask = %v, want %v", got, want)
+	}
+
+	if err := ClearTags(db, "tagged-task"); err != nil {
+		t.Fatalf("ClearTags: %v", err)
+	}
+	tags, _ = ListTagsForTask(db, "tagged-task")
+	if len(tags) != 0 {
+		t.Errorf("after ClearTags: expected no tags, got %v", tags)
+	}
+}
+
+func TestListTasks_FilterByTags_ANDSemantics(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "both-tags", "Both", "backlog", "medium", "/tmp", nil)
+	insertTask(t, db, "one-tag", "One", "backlog", "medium", "/tmp", nil)
+	AddTag(db, "both-tags", "a")
+	AddTag(db, "both-tags", "b")
+	AddTag(db, "one-tag", "a")
+
+	tasks, err := ListTasks(db, TaskFilter{Tags: []string{"a", "b"}})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Slug != "both-tags" {
+		t.Errorf("ListTasks with Tags=[a,b] (AND semantics) = %+v, want only both-tags", tasks)
 	}
 }

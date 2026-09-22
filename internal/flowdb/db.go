@@ -83,6 +83,8 @@ const indexesPostMigrate = `
 CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
 CREATE INDEX IF NOT EXISTS idx_playbooks_project   ON playbooks(project_slug);
+CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id) WHERE session_id IS NOT NULL;
 `
 
 // ---------- models ----------
@@ -117,6 +119,13 @@ type Task struct {
 	SessionID          sql.NullString
 	SessionStarted     sql.NullString
 	SessionLastResumed sql.NullString
+	Assignee           sql.NullString
+	Harness            sql.NullString
+	AutoRunStatus      sql.NullString // "" | "running" | "completed" | "dead"
+	AutoRunPID         sql.NullInt64
+	AutoRunStarted     sql.NullString
+	AutoRunFinished    sql.NullString
+	AutoRunLog         sql.NullString
 	CreatedAt          string
 	UpdatedAt          string
 	ArchivedAt         sql.NullString
@@ -141,7 +150,8 @@ type TaskFilter struct {
 	PlaybookSlug    string // optional; filter to runs of one playbook
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
-	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
+	ExcludeDone     bool     // hide status=done; ignored if Status is set explicitly
+	Tags            []string // AND semantics: a task must carry every listed tag
 }
 
 // ProjectFilter is the equivalent for ListProjects.
@@ -266,6 +276,37 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	for _, col := range []struct{ name, ddl string }{
+		{"assignee", "assignee TEXT"},
+		{"harness", "harness TEXT"},
+		{"auto_run_status", "auto_run_status TEXT"},
+		{"auto_run_pid", "auto_run_pid INTEGER"},
+		{"auto_run_started", "auto_run_started TEXT"},
+		{"auto_run_finished", "auto_run_finished TEXT"},
+		{"auto_run_log", "auto_run_log TEXT"},
+	} {
+		has, err := columnExists(db, "tasks", col.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN ` + col.ddl); err != nil {
+				return fmt.Errorf("add tasks.%s: %w", col.name, err)
+			}
+		}
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS task_tags (
+		    task_slug   TEXT NOT NULL REFERENCES tasks(slug) ON DELETE CASCADE,
+		    tag         TEXT NOT NULL,
+		    created_at  TEXT NOT NULL,
+		    PRIMARY KEY (task_slug, tag)
+		)
+	`); err != nil {
+		return fmt.Errorf("create task_tags: %w", err)
+	}
+
 	// Indexes that depend on columns added above. Safe to run after every
 	// migration pass — CREATE INDEX IF NOT EXISTS is idempotent, and by
 	// this point all referenced columns exist.
@@ -347,7 +388,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, source, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, source, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, assignee, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -355,7 +396,9 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.Slug, &t.Name, &t.ProjectSlug, &t.Status, &t.Kind, &t.PlaybookSlug,
 		&t.Priority, &t.WorkDir, &t.Source,
 		&t.WaitingOn, &t.DueDate, &t.StatusChangedAt, &t.SessionID,
-		&t.SessionStarted, &t.SessionLastResumed, &t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
+		&t.SessionStarted, &t.SessionLastResumed,
+		&t.Assignee, &t.Harness, &t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
+		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -396,6 +439,10 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Since != "" {
 		where = append(where, "updated_at >= ?")
 		args = append(args, filter.Since)
+	}
+	for _, tag := range filter.Tags {
+		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
+		args = append(args, tag)
 	}
 	if !filter.IncludeArchived {
 		where = append(where, "archived_at IS NULL")
@@ -564,6 +611,87 @@ func UpsertPlaybook(db *sql.DB, pb *Playbook) error {
 		return fmt.Errorf("upsert playbook %s: %w", pb.Slug, err)
 	}
 	return nil
+}
+
+// ---------- tag queries ----------
+
+// AddTag associates tag with taskSlug. Idempotent — adding an existing
+// tag is a no-op, not an error.
+func AddTag(db *sql.DB, taskSlug, tag string) error {
+	_, err := db.Exec(
+		`INSERT INTO task_tags (task_slug, tag, created_at) VALUES (?, ?, ?)
+		 ON CONFLICT(task_slug, tag) DO NOTHING`,
+		taskSlug, tag, NowISO(),
+	)
+	if err != nil {
+		return fmt.Errorf("add tag %q to %s: %w", tag, taskSlug, err)
+	}
+	return nil
+}
+
+// RemoveTag disassociates tag from taskSlug. Removing a tag that isn't
+// present is a no-op, not an error.
+func RemoveTag(db *sql.DB, taskSlug, tag string) error {
+	if _, err := db.Exec(`DELETE FROM task_tags WHERE task_slug = ? AND tag = ?`, taskSlug, tag); err != nil {
+		return fmt.Errorf("remove tag %q from %s: %w", tag, taskSlug, err)
+	}
+	return nil
+}
+
+// ClearTags removes all tags from taskSlug.
+func ClearTags(db *sql.DB, taskSlug string) error {
+	if _, err := db.Exec(`DELETE FROM task_tags WHERE task_slug = ?`, taskSlug); err != nil {
+		return fmt.Errorf("clear tags for %s: %w", taskSlug, err)
+	}
+	return nil
+}
+
+// ListTagsForTask returns taskSlug's tags, sorted alphabetically.
+func ListTagsForTask(db *sql.DB, taskSlug string) ([]string, error) {
+	rows, err := db.Query(`SELECT tag FROM task_tags WHERE task_slug = ? ORDER BY tag`, taskSlug)
+	if err != nil {
+		return nil, fmt.Errorf("list tags for %s: %w", taskSlug, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		out = append(out, tag)
+	}
+	return out, rows.Err()
+}
+
+// TagCount pairs a tag with how many non-archived tasks carry it.
+type TagCount struct {
+	Tag   string
+	Count int
+}
+
+// ListAllTags returns every distinct tag in use (across non-archived
+// tasks) with its usage count, sorted alphabetically by tag.
+func ListAllTags(db *sql.DB) ([]TagCount, error) {
+	rows, err := db.Query(`
+		SELECT tt.tag, COUNT(*) FROM task_tags tt
+		JOIN tasks t ON t.slug = tt.task_slug
+		WHERE t.archived_at IS NULL
+		GROUP BY tt.tag ORDER BY tt.tag
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list all tags: %w", err)
+	}
+	defer rows.Close()
+	var out []TagCount
+	for rows.Next() {
+		var tc TagCount
+		if err := rows.Scan(&tc.Tag, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
 }
 
 // ---------- flow-mirror queries ----------
