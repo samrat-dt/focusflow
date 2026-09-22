@@ -36,6 +36,8 @@ func cmdRunPlaybook(args []string) int {
 	slug := args[0]
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	here := fs.Bool("here", false, "bind the current harness session to the new run instead of spawning a tab")
+	auto := fs.Bool("auto", false, "run the playbook headlessly in the background")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -111,6 +113,12 @@ func cmdRunPlaybook(args []string) int {
 	doArgs := []string{runSlug}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")
+	}
+	if *here {
+		doArgs = append(doArgs, "--here")
+	}
+	if *auto {
+		doArgs = append(doArgs, "--auto")
 	}
 	return cmdDo(doArgs)
 }

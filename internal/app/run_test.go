@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,6 +176,65 @@ func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
 	runBrief, _ := os.ReadFile(filepath.Join(root, "tasks", runSlug, "brief.md"))
 	if string(runBrief) != "ORIGINAL" {
 		t.Errorf("snapshot leaked: got %q, want ORIGINAL", string(runBrief))
+	}
+}
+
+func TestRunPlaybook_AutoFlagPassesThroughToDo(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Nightly", "--slug", "nightly", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+
+	origExecCommand := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd { return exec.Command("true") }
+	defer func() { execCommand = origExecCommand }()
+
+	rc := cmdRun([]string{"playbook", "nightly", "--auto"})
+	if rc != 0 {
+		t.Fatalf("run playbook --auto rc=%d", rc)
+	}
+
+	db := openFlowDB(t)
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 run task, got %d", len(tasks))
+	}
+	if !tasks[0].AutoRunStatus.Valid || tasks[0].AutoRunStatus.String != "running" {
+		t.Errorf("AutoRunStatus = %+v, want running (proves --auto reached cmdDo)", tasks[0].AutoRunStatus)
+	}
+}
+
+func TestRunPlaybook_HereFlagPassesThroughToDo(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Quick", "--slug", "quick", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	spawnCount, _ := stubITerm(t)
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "66666666-6666-4666-8666-666666666666")
+	rc := cmdRun([]string{"playbook", "quick", "--here"})
+	if rc != 0 {
+		t.Fatalf("run playbook --here rc=%d", rc)
+	}
+	if *spawnCount != 0 {
+		t.Errorf("run playbook --here must not spawn an iTerm tab, got %d spawns", *spawnCount)
+	}
+
+	db := openFlowDB(t)
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 run task, got %d", len(tasks))
+	}
+	if !tasks[0].SessionID.Valid || tasks[0].SessionID.String != "66666666-6666-4666-8666-666666666666" {
+		t.Errorf("SessionID = %+v, want the CLAUDE_CODE_SESSION_ID value", tasks[0].SessionID)
 	}
 }
 

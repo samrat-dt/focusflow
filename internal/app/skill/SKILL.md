@@ -166,7 +166,9 @@ Sessions
   focusflow done             <ref>
 
 Playbook runs
-  focusflow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
+  focusflow run playbook <slug> [--dangerously-skip-permissions]  spawn a fresh run session (new task with kind=playbook_run)
+  focusflow run playbook <slug> --here   bind THIS harness session to the new run (no new tab)
+  focusflow run playbook <slug> --auto   run the playbook headlessly in the background (no tab, no human)
   focusflow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Read
