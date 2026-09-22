@@ -149,6 +149,9 @@ func addTask(args []string) int {
 	priority := fs.String("priority", "medium", "high|medium|low")
 	dueFlag := fs.String("due", "", "due date (YYYY-MM-DD, today, tomorrow, monday, 3d)")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
+	assignee := fs.String("assignee", "", "person or agent this task is assigned to")
+	var tags stringSliceFlag
+	fs.Var(&tags, "tag", "tag to apply (repeatable)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -251,6 +254,19 @@ func addTask(args []string) int {
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "error: insert task: %v\n", err)
 		return 1
+	}
+
+	if *assignee != "" {
+		if _, err := db.Exec(`UPDATE tasks SET assignee = ? WHERE slug = ?`, *assignee, slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: set assignee: %v\n", err)
+			return 1
+		}
+	}
+	for _, tag := range tags {
+		if err := flowdb.AddTag(db, slug, tag); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Join(taskDir, "updates"), 0o755); err != nil {

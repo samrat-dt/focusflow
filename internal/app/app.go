@@ -45,8 +45,6 @@ func Run(args []string) int {
 		return cmdRun(rest)
 	case "done":
 		return cmdDone(rest)
-	case "due":
-		return cmdDue(rest)
 	case "show":
 		return cmdShow(rest)
 	case "list":
@@ -59,10 +57,6 @@ func Run(args []string) int {
 		return cmdArchive(rest)
 	case "unarchive":
 		return cmdUnarchive(rest)
-	case "priority":
-		return cmdPriority(rest)
-	case "waiting":
-		return cmdWaiting(rest)
 	case "workdir":
 		return cmdWorkdir(rest)
 	case "skill":

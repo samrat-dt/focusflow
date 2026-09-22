@@ -179,10 +179,12 @@ Read
 
 Edit / mutate
   focusflow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
-  focusflow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
-  focusflow priority    <ref> high|medium|low
-  focusflow waiting     <ref> "<who or what>"
-  focusflow waiting     <ref> --clear
+  focusflow update task <ref> [--work-dir <path>] [--mkdir]
+                        [--status backlog|in-progress|done] [--priority high|medium|low]
+                        [--assignee <name>] [--clear-assignee]
+                        [--due-date <date>] [--clear-due]
+                        [--waiting "<who or what>"] [--clear-waiting]
+                        [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   focusflow archive     <ref>
   focusflow unarchive   <ref>
   (focusflow edit, focusflow archive, focusflow unarchive also accept playbook refs)
@@ -504,7 +506,7 @@ Do NOT run any `focusflow` command for this — updates are just files.
 **Triggers:** "I'm waiting on <X>", "blocked on <Y>", "stuck until <Z>",
 "need <person> to respond", "pinged <X>".
 
-**Recipe:** run `focusflow waiting <current-task> "<who or what>"`. The
+**Recipe:** run `focusflow update task <current-task> --waiting "<who or what>"`. The
 status stays `in-progress`; `waiting_on` is just a freeform note that
 will show up in `focusflow list` and `focusflow show task` so the user remembers.
 
@@ -512,7 +514,7 @@ will show up in `focusflow list` and `focusflow show task` so the user remembers
 "no longer waiting on X". Before mutating, confirm via
 `AskUserQuestion` (header: "Clear waiting?", options:
 "Yes, clear it" / "Wait, not yet"). On "Yes", run
-`focusflow waiting <task> --clear`. On "Wait, not yet", stop and let the
+`focusflow update task <task> --clear-waiting`. On "Wait, not yet", stop and let the
 user clarify. (This matches the §8 "do not mark done without
 confirmation" anti-pattern philosophy — clearing `waiting_on` is a
 state mutation and deserves the same explicit click.)
@@ -714,7 +716,8 @@ category of fact. Signals that it's time to Read one:
 Signals it's NOT time to read the KB:
 
 - The user ran a one-shot mutation command (`focusflow done`, `focusflow archive`,
-  `focusflow priority`, `focusflow waiting`) and you're just relaying the result.
+  `focusflow update task --priority ...`, `focusflow update task --waiting ...`) and
+  you're just relaying the result.
 - The current task is purely mechanical and self-contained ("run the
   tests", "fix the obvious typo").
 - You already read the relevant file earlier this session and nothing
@@ -1404,29 +1407,36 @@ long to read at once.
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
 
-### Manual repair — `focusflow update task`
+### Field edits — `focusflow update task`
 
-Escape hatch when the DB drifts from reality. Two fields can be
-corrected:
+The general-purpose mutation surface for a task's fields (status,
+priority, assignee, due date, waiting_on, tags, work_dir):
 
 ```
-focusflow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+focusflow update task <ref> [--work-dir <path>] [--mkdir]
+                      [--status backlog|in-progress|done] [--priority high|medium|low]
+                      [--assignee <name>] [--clear-assignee]
+                      [--due-date <date>] [--clear-due]
+                      [--waiting "<who or what>"] [--clear-waiting]
+                      [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
 ```
 
-When to use:
+At least one field-changing flag must be given. `--status`/`--priority`
+are direct field sets (no interview) — for status flips prefer the
+dedicated flows (`focusflow do` flips backlog→in-progress, `focusflow
+done` flips to done) since they carry side effects `update task
+--status` does not (session bootstrap, KB distillation). Use `--status`
+directly only as a manual correction.
 
-- **`--session-id <uuid>`** — the user spawned a Claude session outside
-  `focusflow do` (e.g. plain `claude` in a terminal) and wants focusflow to track
-  that session going forward. Or: a session jsonl was restored from a
-  backup under a different UUID and they want `focusflow do` to resume it.
-  UUID must be v4 format — claude enforces that on `--session-id`.
-- **`--work-dir <path>`** — the repo moved on disk (renamed parent,
-  moved between drives, cloned to a new path). Pass `--mkdir` if the
-  new path doesn't exist yet.
+`--work-dir` is the escape hatch for when the DB drifts from reality —
+the repo moved on disk (renamed parent, moved between drives, cloned to
+a new path). Pass `--mkdir` if the new path doesn't exist yet. Do not
+run it as a workaround for a bug in `focusflow do`; surface the bug
+instead.
 
-Both flags are optional but at least one must be given. This is a
-manual correction tool — do not run it as a workaround for a bug in
-`focusflow do`; surface the bug instead.
+There is no `--session-id` flag: session binding is owned solely by
+`focusflow do` / `focusflow do --here` (see §4.16), matching the
+invariant that a session_id belongs to at most one task.
 
 ## 10. Environment variables focusflow sets
 

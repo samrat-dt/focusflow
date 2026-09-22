@@ -5,6 +5,7 @@ import (
 	"focusflow/internal/flowdb"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -167,6 +168,30 @@ func TestCmdAddTaskFloating(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "tasks", "fix-bug", "updates")); err != nil {
 		t.Errorf("updates/ missing: %v", err)
+	}
+}
+
+func TestCmdAddTaskAssigneeAndTags(t *testing.T) {
+	setupFlowRoot(t)
+
+	rc := cmdAdd([]string{"task", "Fix login bug", "--slug", "fix-login", "--assignee", "sam", "--tag", "urgent", "--tag", "frontend"})
+	if rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "fix-login")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !task.Assignee.Valid || task.Assignee.String != "sam" {
+		t.Errorf("Assignee = %+v, want sam", task.Assignee)
+	}
+	tags, err := flowdb.ListTagsForTask(db, "fix-login")
+	if err != nil {
+		t.Fatalf("ListTagsForTask: %v", err)
+	}
+	if got, want := tags, []string{"frontend", "urgent"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tags = %v, want %v", got, want)
 	}
 }
 
