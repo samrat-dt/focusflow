@@ -757,6 +757,35 @@ func UpsertMirroredProject(db *sql.DB, slug, name, status, priority, workDir str
 	return n > 0, nil
 }
 
+// SetMirroredProjectArchivedAt stamps archived_at on a mirror-owned
+// project row. Used by the one-time flow->focusflow migration command to
+// carry over archived state, which UpsertMirroredProject doesn't touch.
+// Guarded the same way as UpsertMirroredProject: a native row with the
+// same slug is silently left alone.
+func SetMirroredProjectArchivedAt(db *sql.DB, slug, archivedAt string) error {
+	_, err := db.Exec(
+		`UPDATE projects SET archived_at = ? WHERE slug = ? AND source = 'flow-mirror'`,
+		archivedAt, slug,
+	)
+	if err != nil {
+		return fmt.Errorf("set mirrored project archived_at %s: %w", slug, err)
+	}
+	return nil
+}
+
+// SetMirroredTaskArchivedAt is the task-table equivalent of
+// SetMirroredProjectArchivedAt.
+func SetMirroredTaskArchivedAt(db *sql.DB, slug, archivedAt string) error {
+	_, err := db.Exec(
+		`UPDATE tasks SET archived_at = ? WHERE slug = ? AND source = 'flow-mirror'`,
+		archivedAt, slug,
+	)
+	if err != nil {
+		return fmt.Errorf("set mirrored task archived_at %s: %w", slug, err)
+	}
+	return nil
+}
+
 // UpsertMirroredTask is the task-table equivalent of
 // UpsertMirroredProject. projectSlug may be empty for a floating task.
 // session_id and its siblings are deliberately never written here — a

@@ -555,6 +555,86 @@ func TestUpsertMirroredTaskSkipsNativeCollision(t *testing.T) {
 	}
 }
 
+// TestSetMirroredProjectArchivedAtAppliesToMirrorRow pins the archived_at
+// backfill path used by the one-time migration command: it stamps
+// archived_at on a mirror-owned project row.
+func TestSetMirroredProjectArchivedAtAppliesToMirrorRow(t *testing.T) {
+	db := openTempDB(t)
+	if _, err := UpsertMirroredProject(db, "mp", "Mirrored", "done", "low", "/tmp/mp"); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	if err := SetMirroredProjectArchivedAt(db, "mp", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("SetMirroredProjectArchivedAt: %v", err)
+	}
+
+	p, err := GetProject(db, "mp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.ArchivedAt.Valid || p.ArchivedAt.String != "2026-01-01T00:00:00Z" {
+		t.Errorf("ArchivedAt = %+v, want 2026-01-01T00:00:00Z", p.ArchivedAt)
+	}
+}
+
+// TestSetMirroredProjectArchivedAtSkipsNativeCollision mirrors the
+// UpsertMirrored* native-collision guard: a native row's archived_at is
+// never touched by the migration.
+func TestSetMirroredProjectArchivedAtSkipsNativeCollision(t *testing.T) {
+	db := openTempDB(t)
+	insertProject(t, db, "shared", "Native Name", "/native/dir", "high")
+
+	if err := SetMirroredProjectArchivedAt(db, "shared", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("SetMirroredProjectArchivedAt: %v", err)
+	}
+
+	p, err := GetProject(db, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ArchivedAt.Valid {
+		t.Errorf("expected native project's ArchivedAt untouched, got %+v", p.ArchivedAt)
+	}
+}
+
+// TestSetMirroredTaskArchivedAtAppliesToMirrorRow is the task-table
+// equivalent of TestSetMirroredProjectArchivedAtAppliesToMirrorRow.
+func TestSetMirroredTaskArchivedAtAppliesToMirrorRow(t *testing.T) {
+	db := openTempDB(t)
+	if _, err := UpsertMirroredTask(db, "mt", "Mirrored Task", "", "done", "low", "/tmp/mt"); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	if err := SetMirroredTaskArchivedAt(db, "mt", "2026-02-02T00:00:00Z"); err != nil {
+		t.Fatalf("SetMirroredTaskArchivedAt: %v", err)
+	}
+
+	tk, err := GetTask(db, "mt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tk.ArchivedAt.Valid || tk.ArchivedAt.String != "2026-02-02T00:00:00Z" {
+		t.Errorf("ArchivedAt = %+v, want 2026-02-02T00:00:00Z", tk.ArchivedAt)
+	}
+}
+
+func TestSetMirroredTaskArchivedAtSkipsNativeCollision(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "shared-task", "Native Task", "in-progress", "high", "/native/dir", nil)
+
+	if err := SetMirroredTaskArchivedAt(db, "shared-task", "2026-02-02T00:00:00Z"); err != nil {
+		t.Fatalf("SetMirroredTaskArchivedAt: %v", err)
+	}
+
+	tk, err := GetTask(db, "shared-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.ArchivedAt.Valid {
+		t.Errorf("expected native task's ArchivedAt untouched, got %+v", tk.ArchivedAt)
+	}
+}
+
 func TestMigration_AddsAssigneeHarnessAutoRunTagsColumns(t *testing.T) {
 	db := openTempDB(t)
 

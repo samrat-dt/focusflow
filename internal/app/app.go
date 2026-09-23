@@ -71,6 +71,8 @@ func Run(args []string) int {
 		return cmdBroadcast(rest)
 	case "inbox":
 		return cmdInbox(rest)
+	case "migrate-from-flow":
+		return cmdMigrateFromFlow(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -136,6 +138,9 @@ Message bus:
   focusflow inbox [--as <assignee>] [--all] [--json]
   focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
   focusflow inbox read <id> [--json]
+
+Migration:
+  focusflow migrate-from-flow   (one-time bulk backfill of every real-flow project/task/message)
 
 Workdirs:
   focusflow workdir list

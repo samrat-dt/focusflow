@@ -52,15 +52,36 @@ type Task struct {
 	Status      string
 	Priority    string
 	WorkDir     string
+	ArchivedAt  string // "" if not archived
 }
 
 // Project is the subset of a real-flow project row the mirror needs.
 type Project struct {
-	Slug     string
-	Name     string
-	Status   string
-	Priority string
-	WorkDir  string
+	Slug       string
+	Name       string
+	Status     string
+	Priority   string
+	WorkDir    string
+	ArchivedAt string // "" if not archived
+}
+
+// BusMessage is the subset of a real-flow bus_messages row the
+// one-time migration needs. Fields that have no focusflow equivalent
+// (sender_session_id, delivered_at, waited_s, acked_by) are dropped —
+// see AllBusMessages.
+type BusMessage struct {
+	ID           string
+	CreatedAt    string
+	Kind         string // "message" | "broadcast"
+	FromAssignee string
+	FromTaskSlug string // "" if none
+	ToAssignee   string
+	ToTaskSlug   string // "" if none
+	Body         string
+	Urgent       bool
+	Status       string // "pending" | "delivered" | "acked"
+	AckedAt      string // "" if not acked
+	ReplyTo      string // "" if none
 }
 
 // openReadOnly opens dbPath as a read-only SQLite connection. mode=ro
@@ -132,4 +153,130 @@ func LookupBySessionID(dbPath, sessionID string, busyTimeoutMs int) (*Task, *Pro
 	}
 
 	return &t, project, nil
+}
+
+// AllProjects returns every project row in real flow's flow.db,
+// including archived ones. Unlike LookupBySessionID (which resolves at
+// most one session-bound task), this backs the one-time bulk migration
+// command — it needs the full picture, not just what's currently in
+// flight.
+func AllProjects(dbPath string, busyTimeoutMs int) ([]Project, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, fmt.Errorf("stat %s: %w", dbPath, err)
+	}
+	db, err := openReadOnly(dbPath, busyTimeoutMs)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT slug, name, status, priority, work_dir, archived_at FROM projects ORDER BY slug`)
+	if err != nil {
+		return nil, fmt.Errorf("query all projects: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Project
+	for rows.Next() {
+		var p Project
+		var archivedAt sql.NullString
+		if err := rows.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &archivedAt); err != nil {
+			return nil, fmt.Errorf("scan project: %w", err)
+		}
+		if archivedAt.Valid {
+			p.ArchivedAt = archivedAt.String
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AllTasks returns every task row in real flow's flow.db, including
+// archived ones. See AllProjects.
+func AllTasks(dbPath string, busyTimeoutMs int) ([]Task, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, fmt.Errorf("stat %s: %w", dbPath, err)
+	}
+	db, err := openReadOnly(dbPath, busyTimeoutMs)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT slug, name, project_slug, status, priority, work_dir, archived_at FROM tasks ORDER BY slug`)
+	if err != nil {
+		return nil, fmt.Errorf("query all tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Task
+	for rows.Next() {
+		var t Task
+		var projectSlug, archivedAt sql.NullString
+		if err := rows.Scan(&t.Slug, &t.Name, &projectSlug, &t.Status, &t.Priority, &t.WorkDir, &archivedAt); err != nil {
+			return nil, fmt.Errorf("scan task: %w", err)
+		}
+		if projectSlug.Valid {
+			t.ProjectSlug = projectSlug.String
+		}
+		if archivedAt.Valid {
+			t.ArchivedAt = archivedAt.String
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// AllBusMessages returns every message row in real flow's flow.db,
+// oldest first. The migration relies on this ordering: a reply always
+// has a later created_at than the message it replies to, so inserting
+// in this order guarantees a reply's target row already exists —
+// satisfying focusflow's bus_messages(reply_to) foreign key without
+// needing a second pass.
+func AllBusMessages(dbPath string, busyTimeoutMs int) ([]BusMessage, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, fmt.Errorf("stat %s: %w", dbPath, err)
+	}
+	db, err := openReadOnly(dbPath, busyTimeoutMs)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`
+		SELECT id, created_at, kind, from_assignee, from_task_slug, to_assignee, to_task_slug,
+		       body, urgent, status, acked_at, reply_to
+		FROM bus_messages
+		ORDER BY created_at ASC, rowid ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query all bus messages: %w", err)
+	}
+	defer rows.Close()
+
+	var out []BusMessage
+	for rows.Next() {
+		var m BusMessage
+		var fromTaskSlug, toTaskSlug, ackedAt, replyTo sql.NullString
+		var urgent int
+		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &fromTaskSlug, &m.ToAssignee, &toTaskSlug,
+			&m.Body, &urgent, &m.Status, &ackedAt, &replyTo); err != nil {
+			return nil, fmt.Errorf("scan bus message: %w", err)
+		}
+		m.Urgent = urgent != 0
+		if fromTaskSlug.Valid {
+			m.FromTaskSlug = fromTaskSlug.String
+		}
+		if toTaskSlug.Valid {
+			m.ToTaskSlug = toTaskSlug.String
+		}
+		if ackedAt.Valid {
+			m.AckedAt = ackedAt.String
+		}
+		if replyTo.Valid {
+			m.ReplyTo = replyTo.String
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }

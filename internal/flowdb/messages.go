@@ -63,6 +63,29 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	return nil
 }
 
+// InsertBusMessageIfAbsent inserts a historical message row exactly as
+// given — unlike InsertBusMessage, it does not stamp CreatedAt or force
+// Mail to 'unread', since the caller (the one-time flow->focusflow
+// message migration) is replaying a row that already happened in the
+// past with its own timestamps and read state. INSERT OR IGNORE makes
+// re-running the migration safe: a message id already present is left
+// untouched and reported as not-inserted, never duplicated or errored.
+func InsertBusMessageIfAbsent(db *sql.DB, m *BusMessage) (inserted bool, err error) {
+	res, err := db.Exec(`
+		INSERT OR IGNORE INTO bus_messages
+			(id, from_assignee, from_task_slug, to_assignee, to_task_slug, body, urgent, broadcast, reply_to, mail, created_at, read_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, m.ID, m.FromAssignee, m.FromTaskSlug, m.ToAssignee, m.ToTaskSlug, m.Body, boolToInt(m.Urgent), boolToInt(m.Broadcast), m.ReplyTo, m.Mail, m.CreatedAt, m.ReadAt)
+	if err != nil {
+		return false, fmt.Errorf("insert bus message if absent %s: %w", m.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 // GetBusMessage fetches a message by id.
 func GetBusMessage(db *sql.DB, id string) (*BusMessage, error) {
 	row := db.QueryRow("SELECT "+BusMessageCols+" FROM bus_messages WHERE id = ?", id)
