@@ -135,6 +135,84 @@ func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
 	}
 }
 
+func TestCmdDoRejectsLeadingDashAsRef(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdDo([]string{"--help"})
+	if rc != 2 {
+		t.Errorf("do --help: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
+func TestDo_Auto_PromptTellsSessionToSelfComplete(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "auto-self-complete")
+
+	origExecCommand := execCommand
+	var args []string
+	execCommand = func(name string, a ...string) *exec.Cmd {
+		args = append([]string{name}, a...)
+		return exec.Command("true")
+	}
+	defer func() { execCommand = origExecCommand }()
+
+	if rc := cmdDo([]string{"auto-self-complete", "--auto"}); rc != 0 {
+		t.Fatalf("do --auto rc=%d", rc)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "focusflow done") {
+		t.Errorf("headless prompt must instruct the session it is unattended and must call `focusflow done` itself when finished; got args: %v", args)
+	}
+}
+
+func TestDo_Auto_UsesPrintModeSoItRunsWithoutATTY(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "auto-fresh")
+
+	origExecCommand := execCommand
+	var freshArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		freshArgs = append([]string{name}, args...)
+		return exec.Command("true")
+	}
+	defer func() { execCommand = origExecCommand }()
+
+	if rc := cmdDo([]string{"auto-fresh", "--auto"}); rc != 0 {
+		t.Fatalf("do --auto (fresh) rc=%d", rc)
+	}
+	if !containsArg(freshArgs, "-p") && !containsArg(freshArgs, "--print") {
+		t.Errorf("fresh headless spawn must pass -p/--print (without it claude starts its interactive TUI, which fails immediately with no TTY): %v", freshArgs)
+	}
+
+	// Resume path: give the task an existing session_id directly (as if
+	// a prior `do` had already bootstrapped it), so this --auto call
+	// takes the resume branch, not the fresh-bootstrap branch.
+	seedTask(t, "auto-resume")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET session_id = 'existing-session-id' WHERE slug = 'auto-resume'`); err != nil {
+		t.Fatal(err)
+	}
+	var resumeArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		resumeArgs = append([]string{name}, args...)
+		return exec.Command("true")
+	}
+	if rc := cmdDo([]string{"auto-resume", "--auto"}); rc != 0 {
+		t.Fatalf("do --auto (resume) rc=%d", rc)
+	}
+	if !containsArg(resumeArgs, "-p") && !containsArg(resumeArgs, "--print") {
+		t.Errorf("resume headless spawn must pass -p/--print: %v", resumeArgs)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDo_Auto_CannotCombineWithHere(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "both-flags")

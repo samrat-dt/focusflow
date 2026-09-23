@@ -194,6 +194,7 @@ Edit / mutate
                         [--due-date <date>] [--clear-due]
                         [--waiting "<who or what>"] [--clear-waiting]
                         [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
+  focusflow update project <ref> [--priority high|medium|low]
   focusflow archive     <ref>
   focusflow unarchive   <ref>
   (focusflow edit, focusflow archive, focusflow unarchive also accept playbook refs)
@@ -474,6 +475,25 @@ and stop. Do NOT:
 
 If `focusflow do` itself errored (rc != 0), relay the error and stop. Do
 not attempt workarounds; the user will decide what to do next.
+
+**Autonomous mode (`--auto`):** if the user asks to run a task "headlessly",
+"in the background", "unattended", or "without opening a tab", run
+`focusflow do <ref> --auto` instead (implies `--dangerously-skip-permissions`).
+This launches a detached background process instead of a tab and returns
+immediately — report that it started (pid + log path are printed) and stop;
+do not wait for it or tail its log. The spawned session is told directly in
+its own prompt that it is unattended and must run `focusflow done <ref>`
+itself when finished — you don't need to do anything further to make that
+happen, but don't assume a task is done just because `--auto` was used; check
+`focusflow show task` or `focusflow list tasks` for `auto_run: completed`
+(self-closed) vs `dead` (crashed/killed without closing) before treating it
+as finished.
+
+**Bind this session instead of opening a tab (`--here`):** if the user wants
+*this* conversation to become the task's session (e.g. "track this session
+under X", "bind this to X"), run `focusflow do <ref> --here` (note: the flag
+comes AFTER the ref, not before). No tab is spawned; a session id can only be
+bound to one task, so this fails clearly if either side is already bound.
 
 ### 4.5 Save a progress note
 

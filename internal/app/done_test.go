@@ -56,6 +56,14 @@ func TestCmdDone_MarksAutoRunCompleted(t *testing.T) {
 	}
 }
 
+func TestCmdDoneRejectsLeadingDashAsRef(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdDone([]string{"--help"})
+	if rc != 2 {
+		t.Errorf("done --help: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
 func TestCmdDoneHappyPath(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, nil) // no session, won't fire — but safe

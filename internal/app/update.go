@@ -23,9 +23,64 @@ func cmdUpdate(args []string) int {
 	switch args[0] {
 	case "task":
 		return cmdUpdateTask(args[1:])
+	case "project":
+		return cmdUpdateProject(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "error: unknown update target %q (expected 'task')\n", args[0])
+	fmt.Fprintf(os.Stderr, "error: unknown update target %q (expected 'task' or 'project')\n", args[0])
 	return 2
+}
+
+// cmdUpdateProject implements `focusflow update project <ref> [--priority
+// high|medium|low]`. At least one field-changing flag must be given.
+func cmdUpdateProject(args []string) int {
+	if len(args) < 1 || looksLikeFlag(args[0]) {
+		fmt.Fprintln(os.Stderr, "error: update project requires a project ref")
+		return 2
+	}
+	ref := args[0]
+	fs := flagSet("update project")
+	priority := fs.String("priority", "", "high|medium|low")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if *priority != "" && !isValidPriority(*priority) {
+		fmt.Fprintf(os.Stderr, "error: --priority must be high|medium|low, got %q\n", *priority)
+		return 2
+	}
+	if *priority == "" {
+		fmt.Fprintln(os.Stderr, "error: give at least one field to update")
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	project, err := ResolveProject(db, ref, true)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: project %q not found\n", ref)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	now := flowdb.NowISO()
+	if _, err := db.Exec(`UPDATE projects SET priority=?, updated_at=? WHERE slug=?`, *priority, now, project.Slug); err != nil {
+		fmt.Fprintf(os.Stderr, "error: update priority: %v\n", err)
+		return 1
+	}
+	fmt.Printf("priority → %s\n", *priority)
+	return 0
 }
 
 // cmdUpdateTask implements `focusflow update task <ref> [--status ...]
@@ -36,7 +91,7 @@ func cmdUpdate(args []string) int {
 // solely by `focusflow do`/`focusflow do --here` — there is no
 // --session-id flag here, matching live flow's binding invariant.
 func cmdUpdateTask(args []string) int {
-	if len(args) < 1 {
+	if len(args) < 1 || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
 		return 2
 	}
@@ -156,7 +211,12 @@ func cmdUpdateTask(args []string) int {
 		fmt.Printf("work_dir → %s\n", absWorkDir)
 	}
 	if *status != "" {
-		if _, err := db.Exec(`UPDATE tasks SET status=?, updated_at=? WHERE slug=?`, *status, now, task.Slug); err != nil {
+		if _, err := db.Exec(
+			`UPDATE tasks SET status=?,
+			 status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
+			 updated_at=? WHERE slug=?`,
+			*status, *status, now, now, task.Slug,
+		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: update status: %v\n", err)
 			return 1
 		}

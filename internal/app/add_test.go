@@ -140,6 +140,42 @@ func TestCmdAddProjectBadPriority(t *testing.T) {
 
 // ---------- add task ----------
 
+func TestCmdAddTaskRejectsLeadingDashAsName(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdAdd([]string{"task", "--help"})
+	if rc != 2 {
+		t.Errorf("add task --help: rc=%d, want 2 (usage error, not a created task)", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := flowdb.GetTask(db, "help"); err == nil {
+		t.Error("add task --help must not create a task named 'help'/'--help'")
+	}
+}
+
+func TestCmdAddProjectRejectsLeadingDashAsName(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdAdd([]string{"project", "--help", "--work-dir", t.TempDir()})
+	if rc != 2 {
+		t.Errorf("add project --help: rc=%d, want 2 (usage error, not a created project)", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := flowdb.GetProject(db, "help"); err == nil {
+		t.Error("add project --help must not create a project named 'help'/'--help'")
+	}
+}
+
+func TestCmdAddPlaybookRejectsLeadingDashAsName(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdAdd([]string{"playbook", "--help", "--work-dir", t.TempDir()})
+	if rc != 2 {
+		t.Errorf("add playbook --help: rc=%d, want 2 (usage error, not a created playbook)", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := flowdb.GetPlaybook(db, "help"); err == nil {
+		t.Error("add playbook --help must not create a playbook named 'help'/'--help'")
+	}
+}
+
 func TestCmdAddTaskFloating(t *testing.T) {
 	root := setupFlowRoot(t)
 

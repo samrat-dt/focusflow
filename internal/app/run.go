@@ -29,7 +29,7 @@ func cmdRun(args []string) int {
 }
 
 func cmdRunPlaybook(args []string) int {
-	if len(args) == 0 {
+	if len(args) == 0 || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: run playbook requires a slug")
 		return 2
 	}

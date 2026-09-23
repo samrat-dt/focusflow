@@ -32,7 +32,7 @@ var claudeRunner = func(slug, prompt string) error {
 // (missing claude binary, non-zero exit) only emits a warning — the
 // status flip is the contract; the sweep is best-effort.
 func cmdDone(args []string) int {
-	if len(args) == 0 {
+	if len(args) == 0 || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: done requires a task ref")
 		return 2
 	}

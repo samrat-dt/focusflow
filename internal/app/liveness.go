@@ -25,12 +25,28 @@ func defaultPSLines() ([]string, error) {
 // A ps failure is treated as "not live" rather than propagated, since
 // liveness is a best-effort display hint, not a correctness-critical
 // value.
+//
+// This forks `ps` on every call — fine for a single lookup (`show
+// task`), but a caller checking liveness for many tasks at once (e.g.
+// `list tasks` with `--include-done --include-archived`, which can
+// return hundreds of rows) should call psLines() once and use
+// isSessionLiveIn directly instead of calling this in a loop.
 func isSessionLive(sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
 	lines, err := psLines()
 	if err != nil {
+		return false
+	}
+	return isSessionLiveIn(lines, sessionID)
+}
+
+// isSessionLiveIn is isSessionLive's matching logic against an
+// already-fetched process list, so a caller checking many session ids
+// can fork `ps` once instead of once per id.
+func isSessionLiveIn(lines []string, sessionID string) bool {
+	if sessionID == "" {
 		return false
 	}
 	needleSessionID := "--session-id " + sessionID

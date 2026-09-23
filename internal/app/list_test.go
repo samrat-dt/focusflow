@@ -3,8 +3,10 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"focusflow/internal/flowdb"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -158,6 +160,88 @@ func TestListTasks_NoTruncateShowsFullLongSlug(t *testing.T) {
 	})
 	if !strings.Contains(full, longSlug) {
 		t.Errorf("expected --no-truncate output to contain the full slug, got:\n%s", full)
+	}
+}
+
+func TestListTasks_FormatJSON_CallsPSOnceRegardlessOfTaskCount(t *testing.T) {
+	root, db := showListEditDB(t)
+	for i := 0; i < 5; i++ {
+		slug := fmt.Sprintf("sessioned-%d", i)
+		insertTask(t, db, slug, slug, "in-progress", "medium", filepath.Join(root, "x"), nil)
+		if _, err := db.Exec(`UPDATE tasks SET session_id = ? WHERE slug = ?`, slug+"-session", slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	origPSLines := psLines
+	var calls int
+	psLines = func() ([]string, error) {
+		calls++
+		return nil, nil
+	}
+	defer func() { psLines = origPSLines }()
+
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"tasks", "--format", "json"})
+		if rc != 0 {
+			t.Fatalf("list tasks --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput:\n%s", err, out)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	if calls != 1 {
+		t.Errorf("psLines() called %d times for 5 sessioned tasks, want exactly 1 (ps should be forked once per render, not once per task)", calls)
+	}
+}
+
+func TestListTasks_FormatJSON_RefreshesDeadAutoRun(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "auto-dead", "AutoDead", "in-progress", "medium", filepath.Join(root, "x"), nil)
+
+	// A pid guaranteed not to be running: spawn `true`, wait for it to exit.
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start throwaway process: %v", err)
+	}
+	deadPID := cmd.Process.Pid
+	cmd.Wait()
+
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=? WHERE slug='auto-dead'`,
+		deadPID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		rc := cmdList([]string{"tasks", "--format", "json", "--kind", "all"})
+		if rc != 0 {
+			t.Fatalf("list tasks --format json: rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v\noutput:\n%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d: %v", len(rows), rows)
+	}
+	if rows[0]["auto_run"] != "dead" {
+		t.Errorf("auto_run = %v, want dead (list tasks must refresh stale auto_run_status via refreshAutoRunStatus)", rows[0]["auto_run"])
+	}
+
+	// The DB row itself should now also read 'dead', not just the rendered output.
+	task, err := flowdb.GetTask(db, "auto-dead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.AutoRunStatus.String != "dead" {
+		t.Errorf("stored AutoRunStatus = %q, want dead", task.AutoRunStatus.String)
 	}
 }
 

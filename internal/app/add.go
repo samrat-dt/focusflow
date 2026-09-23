@@ -42,7 +42,7 @@ func cmdAdd(args []string) int {
 }
 
 func addProject(args []string) int {
-	if len(args) == 0 || args[0] == "" {
+	if len(args) == 0 || args[0] == "" || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: add project requires a name")
 		return 2
 	}
@@ -137,7 +137,7 @@ func addProject(args []string) int {
 }
 
 func addTask(args []string) int {
-	if len(args) == 0 || args[0] == "" {
+	if len(args) == 0 || args[0] == "" || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: add task requires a name")
 		return 2
 	}

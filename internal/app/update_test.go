@@ -68,8 +68,112 @@ func TestCmdUpdateTaskUnknownTask(t *testing.T) {
 
 func TestCmdUpdateUnknownTarget(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdUpdate([]string{"project", "foo"}); rc != 2 {
+	if rc := cmdUpdate([]string{"playbook", "foo"}); rc != 2 {
 		t.Errorf("rc=%d, want 2 for unknown update target", rc)
+	}
+}
+
+func TestCmdUpdateTaskRejectsLeadingDashAsRef(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdUpdate([]string{"task", "--help"})
+	if rc != 2 {
+		t.Errorf("update task --help: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
+func TestCmdUpdateProjectRejectsLeadingDashAsRef(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdUpdate([]string{"project", "--help"})
+	if rc != 2 {
+		t.Errorf("update project --help: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
+func TestCmdUpdateProjectPriority(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Proj", "--slug", "proj", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("add project rc=%d", rc)
+	}
+
+	if rc := cmdUpdate([]string{"project", "proj", "--priority", "high"}); rc != 0 {
+		t.Fatalf("update project --priority rc=%d", rc)
+	}
+
+	db := openFlowDB(t)
+	p, err := flowdb.GetProject(db, "proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Priority != "high" {
+		t.Errorf("priority = %q, want high", p.Priority)
+	}
+}
+
+func TestCmdUpdateProjectRejectsBadPriority(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Proj2", "--slug", "proj2", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("add project rc=%d", rc)
+	}
+	if rc := cmdUpdate([]string{"project", "proj2", "--priority", "urgent"}); rc != 2 {
+		t.Errorf("rc=%d, want 2 for invalid priority", rc)
+	}
+}
+
+func TestCmdUpdateProjectRequiresFlag(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Proj3", "--slug", "proj3", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("add project rc=%d", rc)
+	}
+	if rc := cmdUpdate([]string{"project", "proj3"}); rc != 2 {
+		t.Errorf("rc=%d, want 2 when no field-changing flag is given", rc)
+	}
+}
+
+func TestCmdUpdateProjectUnknown(t *testing.T) {
+	setupFlowRoot(t)
+	if rc := cmdUpdate([]string{"project", "nope", "--priority", "high"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 for unknown project", rc)
+	}
+}
+
+func TestUpdateTask_StatusChangeSetsStatusChangedAt(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "status-change-task")
+
+	db := openFlowDB(t)
+	const oldTimestamp = "2020-01-01T00:00:00Z"
+	if _, err := db.Exec(`UPDATE tasks SET status_changed_at = ? WHERE slug = ?`, oldTimestamp, "status-change-task"); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdUpdate([]string{"task", "status-change-task", "--status", "in-progress"}); rc != 0 {
+		t.Fatalf("update task --status rc=%d", rc)
+	}
+
+	after, err := flowdb.GetTask(db, "status-change-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.StatusChangedAt.Valid || after.StatusChangedAt.String == oldTimestamp {
+		t.Errorf("status_changed_at should advance past the pinned old value on a real status transition, still %+v", after.StatusChangedAt)
+	}
+
+	// Setting the SAME status again should not bump status_changed_at —
+	// only an actual transition counts (matches do.go's own
+	// `CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END` logic).
+	unchanged := after.StatusChangedAt
+	if rc := cmdUpdate([]string{"task", "status-change-task", "--status", "in-progress"}); rc != 0 {
+		t.Fatalf("update task --status (same value) rc=%d", rc)
+	}
+	stillSame, err := flowdb.GetTask(db, "status-change-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillSame.StatusChangedAt != unchanged {
+		t.Errorf("status_changed_at changed on a same-value --status update: %+v -> %+v", unchanged, stillSame.StatusChangedAt)
 	}
 }
 

@@ -100,6 +100,21 @@ func listTasksCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	// A `do --auto` run whose process has crashed or been killed still
+	// reads auto_run_status='running' until something notices — refresh
+	// it here so a stale 'running' never reaches the caller as a lie.
+	for _, t := range tasks {
+		if !t.AutoRunStatus.Valid || t.AutoRunStatus.String != "running" {
+			continue
+		}
+		if err := refreshAutoRunStatus(db, t); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: refresh auto_run_status for %s: %v\n", t.Slug, err)
+			continue
+		}
+		if err := db.QueryRow(`SELECT auto_run_status FROM tasks WHERE slug = ?`, t.Slug).Scan(&t.AutoRunStatus); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: re-read auto_run_status for %s: %v\n", t.Slug, err)
+		}
+	}
 
 	root, err := flowRoot()
 	if err != nil {
@@ -258,12 +273,16 @@ type taskRowCommon struct {
 	live bool
 }
 
-func buildTaskRowCommon(db *sql.DB, t *flowdb.Task) (taskRowCommon, error) {
+// buildTaskRowCommon takes an already-fetched process list (from a
+// single psLines() call shared across every task in a render) so that
+// rendering many rows forks `ps` once, not once per task with a
+// session_id.
+func buildTaskRowCommon(db *sql.DB, t *flowdb.Task, procLines []string) (taskRowCommon, error) {
 	tags, err := flowdb.ListTagsForTask(db, t.Slug)
 	if err != nil {
 		return taskRowCommon{}, err
 	}
-	live := t.SessionID.Valid && isSessionLive(t.SessionID.String)
+	live := t.SessionID.Valid && isSessionLiveIn(procLines, t.SessionID.String)
 	return taskRowCommon{tags: tags, live: live}, nil
 }
 
@@ -294,10 +313,14 @@ func renderTasksJSON(tasks []*flowdb.Task, db *sql.DB) int {
 		AutoRun  string   `json:"auto_run"`
 		AgeDays  int      `json:"age_days"`
 	}
+	// Fork `ps` once for the whole render, not once per task — this list
+	// can return hundreds of rows (control-center's own call passes
+	// --include-done --include-archived --kind all).
+	procLines, _ := psLines()
 	now := time.Now()
 	rows := make([]jsonRow, 0, len(tasks))
 	for _, t := range tasks {
-		common, err := buildTaskRowCommon(db, t)
+		common, err := buildTaskRowCommon(db, t, procLines)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -335,9 +358,10 @@ func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
 		"stale", "stale_days", "waiting_on", "assignee", "live", "auto_run", "auto_run_pid",
 		"archived", "tags",
 	}, "\t"))
+	procLines, _ := psLines()
 	now := time.Now()
 	for _, t := range tasks {
-		common, err := buildTaskRowCommon(db, t)
+		common, err := buildTaskRowCommon(db, t, procLines)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1

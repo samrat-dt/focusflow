@@ -57,7 +57,7 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 // needed (race-free via atomic UPDATE ... WHERE session_id IS ?), and
 // spawns an iTerm tab to resume it. See spec §6 for the full protocol.
 func cmdDo(args []string) int {
-	if len(args) == 0 {
+	if len(args) == 0 || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
 		return 2
 	}
@@ -361,6 +361,21 @@ func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun b
 	return buildTaskBootstrapPrompt(slug)
 }
 
+// autonomousModeAddendum tells a `do --auto` session it is running
+// unattended and must close the loop itself — without this, a run that
+// finishes normally but never calls `focusflow done` leaves
+// auto_run_status stuck at 'running' until refreshAutoRunStatus
+// eventually notices the process exited and marks it 'dead', which is
+// indistinguishable from a crash to anything reading the status later.
+func autonomousModeAddendum(slug string) string {
+	return fmt.Sprintf(
+		"IMPORTANT — you are running headlessly and unattended (no human is watching this session). "+
+			"When you have finished the work described above, run `focusflow done %s` yourself to close out the task. "+
+			"Do not wait for a human to do this — no one will.",
+		slug,
+	)
+}
+
 // buildTaskBootstrapPrompt is the prompt for regular tasks.
 func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
@@ -525,6 +540,9 @@ func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstr
 		return 1
 	}
 
+	// -p/--print is required for a headless run: without it claude starts
+	// its interactive TUI, which fails immediately with no TTY attached
+	// (stdout/stderr here go to a log file, not a terminal).
 	var args []string
 	if needsBootstrap {
 		playbookSlug := ""
@@ -532,15 +550,17 @@ func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstr
 			playbookSlug = task.PlaybookSlug.String
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, false)
+		prompt = prompt + "\n\n" + autonomousModeAddendum(task.Slug)
 		if withText != "" {
 			prompt = prompt + "\n\n" + withText
 		}
-		args = []string{"--session-id", sessionID, prompt}
+		args = []string{"--session-id", sessionID, "-p", prompt}
 	} else {
-		args = []string{"--resume", sessionID}
+		resumeText := autonomousModeAddendum(task.Slug)
 		if withText != "" {
-			args = append(args, withText)
+			resumeText = resumeText + "\n\n" + withText
 		}
+		args = []string{"--resume", sessionID, "-p", resumeText}
 	}
 	args = append(args, extraArgs...)
 

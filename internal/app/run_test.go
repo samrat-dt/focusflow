@@ -179,6 +179,14 @@ func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
 	}
 }
 
+func TestCmdRunPlaybookRejectsLeadingDashAsSlug(t *testing.T) {
+	setupFlowRoot(t)
+	rc := cmdRun([]string{"playbook", "--help"})
+	if rc != 2 {
+		t.Errorf("run playbook --help: rc=%d, want 2 (usage error)", rc)
+	}
+}
+
 func TestRunPlaybook_AutoFlagPassesThroughToDo(t *testing.T) {
 	setupFlowRoot(t)
 	wd := t.TempDir()

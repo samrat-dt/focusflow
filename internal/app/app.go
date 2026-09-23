@@ -84,27 +84,41 @@ Setup:
   focusflow skill update
 
 Create:
-  focusflow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
-  focusflow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
+  focusflow add project  "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
+  focusflow add task     "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
+                            [--priority h|m|l] [--due <date>] [--assignee <name>] [--tag <t> ...]
+  focusflow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions:
-  focusflow do                <ref> [--fresh] [--dangerously-skip-permissions]
-  focusflow done              <ref>
-  focusflow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  focusflow do    <ref> [--fresh] [--dangerously-skip-permissions] [--harness claude|codex]
+                        [--with "<instruction>" | --with-file <path>]
+  focusflow do    <ref> --here [--force]     (bind THIS harness session — no new tab)
+  focusflow do    <ref> --auto               (run headlessly in the background)
+  focusflow done  <ref>
+  focusflow run playbook  <slug> [--dangerously-skip-permissions] [--here] [--auto]
+                                  [--with "<instruction>" | --with-file <path>]
+  focusflow hook session-start   (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
   focusflow show task       [<ref>]
   focusflow show project    [<ref>]
-  focusflow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
-  focusflow list tasks    [--status ...] [--project ...] [--priority ...] [--since ...] [--include-archived]
-  focusflow list projects [--status ...] [--include-archived]
+  focusflow show playbook   <ref>
+  focusflow transcript      [<ref>] [--compact]
+  focusflow list tasks     [--status ...] [--project ...] [--priority ...] [--since ...] [--kind ...]
+                            [--tag <t> ...] [--include-archived] [--include-done]
+                            [--format table|json|tsv] [--no-color] [--no-truncate]
+  focusflow list projects  [--status ...] [--include-archived] [--format table|json|tsv]
+  focusflow list playbooks [--project <slug>] [--include-archived] [--format table|json|tsv]
+  focusflow list tags      [--format table|json|tsv]
+  focusflow list runs      [<playbook-slug>] [--status ...] [--include-archived] [--format table|json|tsv]
 
 Edit / mutate:
-  focusflow edit        <ref>
-  focusflow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
-  focusflow due         <ref> <date> | --clear                    (set or clear due date; date: YYYY-MM-DD, today, tomorrow, monday, 3d)
-  focusflow priority  <ref> high|medium|low
-  focusflow waiting   <ref> "<who or what>" | --clear
+  focusflow edit          <ref>
+  focusflow update task   <ref> [--work-dir <path>] [--mkdir]
+                          [--status ...] [--priority ...] [--assignee <name>] [--clear-assignee]
+                          [--due-date <date>] [--clear-due] [--waiting "<who or what>"] [--clear-waiting]
+                          [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
+  focusflow update project <ref> [--priority h|m|l]
   focusflow archive   <ref>
   focusflow unarchive <ref>
 
@@ -112,11 +126,5 @@ Workdirs:
   focusflow workdir list
   focusflow workdir add <path> [--name <nickname>]
   focusflow workdir remove <path>
-  focusflow workdir scan [<root>] [--add]
-
-Playbooks:
-  focusflow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  focusflow run playbook   <slug> [--dangerously-skip-permissions]
-  focusflow show playbook  <ref>
-  focusflow list playbooks [--project <slug>] [--include-archived]`)
+  focusflow workdir scan [<root>] [--add]`)
 }

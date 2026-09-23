@@ -37,7 +37,7 @@ retroactively change past runs.*
 
 // addPlaybook implements `focusflow add playbook "<name>" [flags]`.
 func addPlaybook(args []string) int {
-	if len(args) == 0 || args[0] == "" {
+	if len(args) == 0 || args[0] == "" || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: add playbook requires a name")
 		return 2
 	}
