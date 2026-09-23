@@ -105,7 +105,9 @@ Sessions:
   focusflow done  <ref>
   focusflow run playbook  <slug> [--dangerously-skip-permissions] [--here] [--auto]
                                   [--with "<instruction>" | --with-file <path>]
-  focusflow hook session-start   (SessionStart hook handler — wire via ~/.claude/settings.json)
+  focusflow hook session-start       (SessionStart hook handler — wire via ~/.claude/settings.json)
+  focusflow hook user-prompt-submit  (UserPromptSubmit hook — per-turn task anchor)
+  focusflow hook stop                (Stop hook — nudges on an unread reply to an outstanding message)
 
 Read:
   focusflow show task       [<ref>]

@@ -92,6 +92,46 @@ func GetBusMessage(db *sql.DB, id string) (*BusMessage, error) {
 	return ScanBusMessage(row)
 }
 
+// LatestOutgoingMessage returns the newest non-broadcast message a task
+// sent to a given mailbox, or nil if it never sent one. Used by the Stop
+// hook to find "the question this task is waiting on an answer to" —
+// broadcasts are excluded since they're one-way FYIs, not questions
+// awaiting a specific reply.
+func LatestOutgoingMessage(db *sql.DB, fromTaskSlug, toAssignee string) (*BusMessage, error) {
+	row := db.QueryRow(
+		"SELECT "+BusMessageCols+" FROM bus_messages WHERE from_task_slug = ? AND to_assignee = ? AND broadcast = 0 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+		fromTaskSlug, toAssignee,
+	)
+	m, err := ScanBusMessage(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("latest outgoing message: %w", err)
+	}
+	return m, nil
+}
+
+// UnreadReplyTo returns the oldest still-unread message that replies to
+// the given message id, or nil if there is none. Once the reply is
+// marked read (e.g. via `inbox pop`), it stops matching — this is the
+// mechanism the Stop hook's nudge relies on to only fire until the
+// assistant actually consumes the reply, never after.
+func UnreadReplyTo(db *sql.DB, replyToID string) (*BusMessage, error) {
+	row := db.QueryRow(
+		"SELECT "+BusMessageCols+" FROM bus_messages WHERE reply_to = ? AND mail = 'unread' ORDER BY created_at ASC, rowid ASC LIMIT 1",
+		replyToID,
+	)
+	m, err := ScanBusMessage(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unread reply to %s: %w", replyToID, err)
+	}
+	return m, nil
+}
+
 // MailboxFilter identifies one mailbox to read from: either a specific
 // task's own queue (TaskSlug set) or an assignee-level queue such as
 // "user" (Assignee set, TaskSlug empty).

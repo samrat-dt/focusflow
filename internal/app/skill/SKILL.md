@@ -199,6 +199,15 @@ Edit / mutate
   focusflow unarchive   <ref>
   (focusflow edit, focusflow archive, focusflow unarchive also accept playbook refs)
 
+Message bus
+  focusflow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>]
+                                     (message a human — "user" is the local human — or the
+                                      session bound to a task; never your own address; alias: msg)
+  focusflow broadcast "<one-liner>" [--urgent]   (alias: post)
+  focusflow inbox [--as <assignee>] [--all] [--json]
+  focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
+  focusflow inbox read <id> [--json]
+
 Workdirs
   focusflow workdir list
   focusflow workdir add <path> [--name <nickname>]
@@ -1086,6 +1095,42 @@ triggers each turn — especially when transitioning into design /
 implementation / debugging work. The SessionStart hook gets you the
 first check; you are responsible for every subsequent check.
 Re-evaluate on every turn.
+
+### 4.18 Message bus (mail — unread/read)
+
+Mail between sessions and the human. A message is **unread** until
+consumed, then **read**. Two purposes — pick the verb by intent:
+
+1. **Reach out to the user / get instructions.** `focusflow message user
+   "<ask>"` when the user is AFK and you need a decision, a permission
+   only they can grant, or a long task they're waiting on is done. Stays
+   unread until answered. NOT for routine progress, and not when they're
+   clearly active here. ONE per wait — NEVER re-send.
+2. **Collaborate with peers.** `focusflow message <assignee>/<task-slug>
+   "<what to DO>"` hands context to that task's session (no
+   interruption). Add `--reply-to <id>` so a routed reply carries
+   lineage (the bus doesn't thread). `focusflow broadcast "<one-liner>"`
+   FYIs your own mailbox (the one universal recipient) — watches aren't
+   implemented yet, so a broadcast doesn't fan out to anyone else. You
+   can NEVER message your own address (focusflow rejects it).
+
+**Consuming.** `focusflow inbox` lists unread; `focusflow inbox --all`
+lists everything retained; `focusflow inbox read <id>` shows/acks one
+specific message out of order; `focusflow inbox pop` consumes the oldest
+unread. `--as user` drains the human queue from a monitor session;
+`--json` for scripts.
+
+A **Stop hook** (`focusflow hook stop`) is a belt-and-braces backstop for
+case 1 above: if a reply has arrived to a question this task asked the
+user via `focusflow message user` and that reply is still unread, it
+blocks the turn from ending and tells you to run `focusflow inbox pop`
+— so an outstanding question never silently goes unnoticed even if you
+forgot to check. If you see a block reason starting with
+"focusflow-bus:", that's this hook; just pop the message and continue —
+factor the reported elapsed wait into your response (state may be stale
+after a long wait).
+
+Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 ## 6. The `work_dir` question — rules
 

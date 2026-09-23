@@ -3,24 +3,29 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"focusflow/internal/flowdb"
 	"os"
+	"time"
 )
 
-// cmdHook dispatches `focusflow hook <subcommand>`. The only subcommand in
-// v2 is `session-start`, which is intended to be wired as a Claude Code
-// SessionStart hook so that EVERY session start (fresh spawn AND resume)
-// re-injects the "load your task context" instruction. Without the hook,
-// resumed sessions never re-read briefs and updates that may have been
-// edited since the previous session.
+// cmdHook dispatches `focusflow hook <subcommand>`. session-start,
+// user-prompt-submit, and stop are wired as Claude Code hooks (see
+// ~/.claude/settings.json) so a bound session's task context, scope-creep
+// anchor, and pending-reply nudge all stay live without the agent having
+// to remember to check any of them itself.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start)")
+		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|stop)")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "session-start":
 		return cmdHookSessionStart(rest)
+	case "user-prompt-submit":
+		return cmdHookUserPromptSubmit(rest)
+	case "stop":
+		return cmdHookStop(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2
@@ -84,7 +89,13 @@ func cmdHookSessionStart(args []string) int {
 			"you don't recognize, a question about who someone is, a request for org context). "+
 			"Throughout the session, if the user shares a durable fact about themselves, "+
 			"the org, products, processes, or business, append it to the matching kb "+
-			"file on the fly — no permission needed — per the focusflow skill's §4.10.",
+			"file on the fly — no permission needed — per the focusflow skill's §4.10. "+
+			"Message-bus listener discipline: arm ONE persistent Monitor NOW (Monitor "+
+			"streams stdout lines as events): Monitor(command: 'while true; do focusflow "+
+			"inbox pop --wait --timeout 300 --json || true; done', persistent: true). "+
+			"Every message then wakes you as an event, no re-arming ever (--json is silent "+
+			"on timeouts). Only if Monitor is unavailable, fall back to a background Bash "+
+			"`focusflow inbox pop --wait` and re-arm it after every wake.",
 		slug,
 	)
 
@@ -120,4 +131,160 @@ func emitSessionStartContext(ctx string) int {
 		return 1
 	}
 	return 0
+}
+
+// cmdHookUserPromptSubmit emits a Claude Code UserPromptSubmit hook
+// response. Wired via ~/.claude/settings.json so EVERY user prompt in a
+// bound session re-injects a one-line anchor naming the task — ported
+// from real flow's own UserPromptSubmit hook (observed directly: same
+// hookSpecificOutput shape, same "§4.11/§4.7" citation), since without
+// this reminder scope-creep detection (§4.11) and close-out offers
+// (§4.7) only ever get checked once, at session start, and silently
+// drift out of the agent's attention over a long session.
+//
+// Silent (no output) when the session isn't bound to any task — the
+// anchor only makes sense once there's a task to name.
+func cmdHookUserPromptSubmit(args []string) int {
+	fs := flagSet("hook user-prompt-submit")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		return 0 // focusflow not initialized — nothing to anchor
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+
+	slug := resolveCurrentTaskSlug(db)
+	if slug == "" {
+		return 0
+	}
+	task, err := flowdb.GetTask(db, slug)
+	if err != nil {
+		return 0 // stale $FOCUSFLOW_TASK or dangling session_id — say nothing rather than guess
+	}
+
+	ctx := fmt.Sprintf(
+		"focusflow session → task %q (%s). Per §4.11/§4.7: if this prompt is unrelated work, "+
+			"offer a new task; if it signals the task is done, offer to close it out. Else proceed silently.",
+		task.Name, slug,
+	)
+	out := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "UserPromptSubmit",
+			"additionalContext": ctx,
+		},
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// stopHookInput is the subset of Claude Code's Stop-hook stdin JSON this
+// command reads. stop_hook_active is true when this invocation is
+// itself the forced continuation from a PRIOR block — without checking
+// it, a still-unread reply would block every single "stop" forever.
+type stopHookInput struct {
+	StopHookActive bool `json:"stop_hook_active"`
+}
+
+// cmdHookStop emits a Claude Code Stop hook response. Wired via
+// ~/.claude/settings.json. Reconstructed from real flow's installed Stop
+// hook (observed via its embedded strings — "flow-bus: the user has
+// just returned... your message [%s] (%q) was answered after %s" and
+// its stop_hook_active / decision / reason fields — real flow's exact
+// source for this hook wasn't available to port directly, so this is a
+// best-effort behavioral match, not a byte-identical copy).
+//
+// Purpose: the armed Monitor loop (`focusflow inbox pop --wait`) is the
+// primary way a session notices a reply arrived, but it's a separate
+// process the agent could fail to arm or that could die silently. This
+// hook is the belt-and-braces backstop: right as the agent's turn is
+// about to end, if a reply has arrived to a question this task asked
+// the user (`focusflow message user "..."`) and that reply is still
+// unread, block the stop and surface it — forcing the agent to consume
+// it via `focusflow inbox pop` before the turn is allowed to end. Once
+// consumed (mail flips to 'read'), the condition stops matching, so the
+// nudge fires exactly until it's acted on, never after.
+func cmdHookStop(args []string) int {
+	fs := flagSet("hook stop")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	var in stopHookInput
+	_ = json.NewDecoder(os.Stdin).Decode(&in) // best-effort; absent/malformed stdin just means in.StopHookActive stays false
+	if in.StopHookActive {
+		return 0
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		return 0
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+
+	slug := resolveCurrentTaskSlug(db)
+	if slug == "" {
+		return 0
+	}
+
+	asked, err := flowdb.LatestOutgoingMessage(db, slug, "user")
+	if err != nil || asked == nil {
+		return 0
+	}
+	reply, err := flowdb.UnreadReplyTo(db, asked.ID)
+	if err != nil || reply == nil {
+		return 0
+	}
+
+	elapsed := "an unknown amount of time"
+	if askedAt, err1 := time.Parse(time.RFC3339, asked.CreatedAt); err1 == nil {
+		if repliedAt, err2 := time.Parse(time.RFC3339, reply.CreatedAt); err2 == nil {
+			elapsed = formatHookElapsed(repliedAt.Sub(askedAt))
+		}
+	}
+
+	reason := fmt.Sprintf(
+		"focusflow-bus: the user has just returned. Your message [%s] (%q) was answered after %s. "+
+			"Factor the elapsed time in; re-verify stale state after long waits. Consume it with "+
+			"`focusflow inbox pop` now.",
+		asked.ID, asked.Body, elapsed,
+	)
+	out := map[string]any{
+		"decision": "block",
+		"reason":   reason,
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// formatHookElapsed renders a duration the way the nudge text expects
+// (e.g. "3m", "1h5m") — coarse enough to read at a glance, no need for
+// second-level precision in a "how long were you gone" framing.
+func formatHookElapsed(d time.Duration) string {
+	if d < time.Minute {
+		return "under a minute"
+	}
+	d = d.Round(time.Minute)
+	h := d / time.Hour
+	m := (d % time.Hour) / time.Minute
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
 }
