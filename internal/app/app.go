@@ -65,6 +65,12 @@ func Run(args []string) int {
 		return cmdTranscript(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "message", "msg":
+		return cmdMessage(rest)
+	case "broadcast", "post":
+		return cmdBroadcast(rest)
+	case "inbox":
+		return cmdInbox(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -121,6 +127,15 @@ Edit / mutate:
   focusflow update project <ref> [--priority h|m|l]
   focusflow archive   <ref>
   focusflow unarchive <ref>
+
+Message bus:
+  focusflow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>]
+                                     (message a human — "user" is the local human — or the
+                                      session bound to a task; never your own address; alias: msg)
+  focusflow broadcast "<one-liner>" [--urgent]   (alias: post)
+  focusflow inbox [--as <assignee>] [--all] [--json]
+  focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
+  focusflow inbox read <id> [--json]
 
 Workdirs:
   focusflow workdir list

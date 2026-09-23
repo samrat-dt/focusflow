@@ -73,6 +73,30 @@ CREATE TABLE IF NOT EXISTS workdirs (
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
+
+-- Message bus: directed messages between "user" (the local human) and a
+-- task's bound session, plus broadcasts. A message is addressed to either
+-- a specific task's own mailbox (to_task_slug set) or an assignee-level
+-- mailbox like "user" (to_assignee set, to_task_slug NULL). See
+-- internal/app/message.go and internal/app/inbox.go for the CLI surface;
+-- flow skill §4.18 documents the equivalent behavior this mirrors.
+CREATE TABLE IF NOT EXISTS bus_messages (
+    id              TEXT PRIMARY KEY,
+    from_assignee   TEXT NOT NULL,
+    from_task_slug  TEXT REFERENCES tasks(slug),
+    to_assignee     TEXT NOT NULL,
+    to_task_slug    TEXT REFERENCES tasks(slug),
+    body            TEXT NOT NULL,
+    urgent          INTEGER NOT NULL DEFAULT 0,
+    broadcast       INTEGER NOT NULL DEFAULT 0,
+    reply_to        TEXT REFERENCES bus_messages(id),
+    mail            TEXT NOT NULL DEFAULT 'unread' CHECK (mail IN ('unread','read')),
+    created_at      TEXT NOT NULL,
+    read_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bus_messages_to_task     ON bus_messages(to_task_slug, mail, created_at);
+CREATE INDEX IF NOT EXISTS idx_bus_messages_to_assignee ON bus_messages(to_assignee, mail, created_at);
 `
 
 // indexesPostMigrate are indexes that depend on columns added by
