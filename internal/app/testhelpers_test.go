@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	flowdb "focusflow/internal/flowdb"
+	store "focusflow/internal/store"
 )
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "focusflow.db")
-	db, err := flowdb.OpenDB(path)
+	db, err := store.OpenDB(path)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
 	}
@@ -21,7 +21,7 @@ func openTempDB(t *testing.T) *sql.DB {
 
 func insertProject(t *testing.T, db *sql.DB, slug, name, wd, priority string) {
 	t.Helper()
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	_, err := db.Exec(`INSERT INTO projects (slug, name, status, priority, work_dir, created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?, ?)`,
 		slug, name, priority, wd, now, now)
 	if err != nil {
@@ -31,7 +31,7 @@ func insertProject(t *testing.T, db *sql.DB, slug, name, wd, priority string) {
 
 func insertTask(t *testing.T, db *sql.DB, slug, name, status, priority, wd string, project any) {
 	t.Helper()
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	_, err := db.Exec(`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		slug, name, project, status, priority, wd, now, now)
 	if err != nil {

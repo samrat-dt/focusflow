@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,12 +39,12 @@ func cmdWorkdir(args []string) int {
 // openFlowDBForWorkdir opens the focusflow DB and returns (db, rc). On error, it
 // prints and returns a non-nil error rc.
 func openFlowDBForWorkdir() (*sql.DB, int) {
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return nil, 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return nil, 1
@@ -71,7 +71,7 @@ func cmdWorkdirList(args []string) int {
 	}
 	defer db.Close()
 
-	list, err := flowdb.ListWorkdirs(db)
+	list, err := store.ListWorkdirs(db)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -185,7 +185,7 @@ func cmdWorkdirAdd(args []string) int {
 	}
 	defer db.Close()
 
-	if err := flowdb.UpsertWorkdir(db, abs, name, description, remote); err != nil {
+	if err := store.UpsertWorkdir(db, abs, name, description, remote); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -345,7 +345,7 @@ func cmdWorkdirScan(args []string) int {
 	addedCount := 0
 	for _, path := range candidates {
 		remote := detectGitRemote(path)
-		existing, err := flowdb.GetWorkdir(db, path)
+		existing, err := store.GetWorkdir(db, path)
 		known := err == nil && existing != nil
 		if !known && !errors.Is(err, sql.ErrNoRows) && err != nil {
 			// Non-fatal: log and treat as new.
@@ -357,7 +357,7 @@ func cmdWorkdirScan(args []string) int {
 				continue
 			}
 			name := filepath.Base(path)
-			if err := flowdb.UpsertWorkdir(db, path, name, "", remote); err != nil {
+			if err := store.UpsertWorkdir(db, path, name, "", remote); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: upsert %s: %v\n", path, err)
 				continue
 			}

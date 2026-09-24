@@ -3,27 +3,24 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// isolateHookEnv points every path cmdHookSessionStart's new mirror side
-// effect (mirrorFromFlow) could touch at a throwaway temp tree, and clears
-// the harness session-id env vars it reads. Without this, running these
-// tests under an actual Claude Code / Codex session (as happens during
-// interactive development) would have mirrorFromFlow read the real
-// ~/.flow/flow.db and write into the real ~/.focusflow/focusflow.db —
-// exactly the isolation CLAUDE.md requires ("nothing touches real
-// ~/.focusflow/ or ~/.claude/").
+// isolateHookEnv points every path the hooks could touch at a throwaway
+// temp tree and clears the harness session-id env vars they read. Without
+// this, running these tests under an actual Claude Code / Codex session
+// (as happens during interactive development) would read and write the
+// real ~/.focusflow — exactly the isolation CLAUDE.md requires ("nothing
+// touches real ~/.focusflow/ or ~/.claude/").
 func isolateHookEnv(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, ".focusflow"))
-	t.Setenv("FLOW_ROOT", filepath.Join(tmp, ".flow-does-not-exist"))
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CODEX_THREAD_ID", "")
 }
@@ -165,14 +162,14 @@ func captureStdoutWithStdin(t *testing.T, stdin string, f func()) string {
 func hookTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	isolateHookEnv(t)
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
-		t.Fatalf("flowRoot: %v", err)
+		t.Fatalf("dataRoot: %v", err)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir root: %v", err)
 	}
-	db, err := flowdb.OpenDB(filepath.Join(root, "focusflow.db"))
+	db, err := store.OpenDB(filepath.Join(root, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("open focusflow.db: %v", err)
 	}
@@ -197,7 +194,7 @@ func TestHookUserPromptSubmitUnboundSessionIsSilent(t *testing.T) {
 }
 
 // TestHookUserPromptSubmitBoundSessionEmitsAnchor pins the primary
-// contract, matching real flow's observed UserPromptSubmit hook shape:
+// contract:
 // a one-line anchor naming the task and citing §4.11/§4.7 so scope-creep
 // detection and close-out offers stay live every turn.
 func TestHookUserPromptSubmitBoundSessionEmitsAnchor(t *testing.T) {
@@ -232,10 +229,10 @@ func TestHookUserPromptSubmitBoundSessionEmitsAnchor(t *testing.T) {
 }
 
 // insertTaskForHookTest creates a minimal native focusflow task so
-// resolveCurrentTaskSlug / flowdb.GetTask can resolve it by slug.
+// resolveCurrentTaskSlug / store.GetTask can resolve it by slug.
 func insertTaskForHookTest(t *testing.T, db *sql.DB, slug, name string) {
 	t.Helper()
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO tasks (slug, name, status, priority, work_dir, source, created_at, updated_at) VALUES (?, ?, 'in-progress', 'medium', '/tmp/x', 'native', ?, ?)`,
 		slug, name, now, now,
@@ -276,9 +273,8 @@ func TestHookStopNoOutstandingMessageIsSilent(t *testing.T) {
 }
 
 // TestHookStopUnreadReplyBlocksWithNudge pins the primary contract,
-// reconstructed from real flow's observed strings ("flow-bus: the user
-// has just returned... your message [id] (...) was answered after
-// ..."): when a reply has arrived to a question this task asked the
+// ("focusflow-bus: the user has just returned... your message [id] (...)
+// was answered after ..."): when a reply has arrived to a question this task asked the
 // user and that reply is still unread, the Stop hook blocks ending the
 // turn and surfaces a nudge naming the message id and elapsed wait.
 func TestHookStopUnreadReplyBlocksWithNudge(t *testing.T) {
@@ -286,19 +282,19 @@ func TestHookStopUnreadReplyBlocksWithNudge(t *testing.T) {
 	insertTaskForHookTest(t, db, "waiting-task", "Waiting Task")
 	t.Setenv("FOCUSFLOW_TASK", "waiting-task")
 
-	asked := &flowdb.BusMessage{
+	asked := &store.BusMessage{
 		ID: "msg-asked", FromAssignee: "user", ToAssignee: "user",
 		FromTaskSlug: sql.NullString{String: "waiting-task", Valid: true},
 		Body:         "should I proceed?", Mail: "unread", CreatedAt: "2026-01-01T00:00:00Z",
 	}
-	answered := &flowdb.BusMessage{
+	answered := &store.BusMessage{
 		ID: "msg-answered", FromAssignee: "user", ToAssignee: "waiting-task",
 		ToTaskSlug: sql.NullString{String: "waiting-task", Valid: true},
 		Body:       "yes go ahead", Mail: "unread", CreatedAt: "2026-01-01T00:03:00Z",
 		ReplyTo: sql.NullString{String: "msg-asked", Valid: true},
 	}
-	for _, m := range []*flowdb.BusMessage{asked, answered} {
-		if _, err := flowdb.InsertBusMessageIfAbsent(db, m); err != nil {
+	for _, m := range []*store.BusMessage{asked, answered} {
+		if _, err := store.InsertBusMessageIfAbsent(db, m); err != nil {
 			t.Fatalf("seed message %s: %v", m.ID, err)
 		}
 	}
@@ -335,19 +331,19 @@ func TestHookStopAlreadyReadReplyIsSilent(t *testing.T) {
 	insertTaskForHookTest(t, db, "resolved-task", "Resolved Task")
 	t.Setenv("FOCUSFLOW_TASK", "resolved-task")
 
-	asked := &flowdb.BusMessage{
+	asked := &store.BusMessage{
 		ID: "msg-asked2", FromAssignee: "user", ToAssignee: "user",
 		FromTaskSlug: sql.NullString{String: "resolved-task", Valid: true},
 		Body:         "ok?", Mail: "read", CreatedAt: "2026-01-01T00:00:00Z",
 	}
-	answered := &flowdb.BusMessage{
+	answered := &store.BusMessage{
 		ID: "msg-answered2", FromAssignee: "user", ToAssignee: "resolved-task",
 		ToTaskSlug: sql.NullString{String: "resolved-task", Valid: true},
 		Body:       "yep", Mail: "read", CreatedAt: "2026-01-01T00:01:00Z",
 		ReplyTo: sql.NullString{String: "msg-asked2", Valid: true},
 	}
-	for _, m := range []*flowdb.BusMessage{asked, answered} {
-		if _, err := flowdb.InsertBusMessageIfAbsent(db, m); err != nil {
+	for _, m := range []*store.BusMessage{asked, answered} {
+		if _, err := store.InsertBusMessageIfAbsent(db, m); err != nil {
 			t.Fatalf("seed message %s: %v", m.ID, err)
 		}
 	}
@@ -370,19 +366,19 @@ func TestHookStopRespectsStopHookActive(t *testing.T) {
 	insertTaskForHookTest(t, db, "loop-task", "Loop Task")
 	t.Setenv("FOCUSFLOW_TASK", "loop-task")
 
-	asked := &flowdb.BusMessage{
+	asked := &store.BusMessage{
 		ID: "msg-asked3", FromAssignee: "user", ToAssignee: "user",
 		FromTaskSlug: sql.NullString{String: "loop-task", Valid: true},
 		Body:         "ok?", Mail: "unread", CreatedAt: "2026-01-01T00:00:00Z",
 	}
-	answered := &flowdb.BusMessage{
+	answered := &store.BusMessage{
 		ID: "msg-answered3", FromAssignee: "user", ToAssignee: "loop-task",
 		ToTaskSlug: sql.NullString{String: "loop-task", Valid: true},
 		Body:       "yep", Mail: "unread", CreatedAt: "2026-01-01T00:01:00Z",
 		ReplyTo: sql.NullString{String: "msg-asked3", Valid: true},
 	}
-	for _, m := range []*flowdb.BusMessage{asked, answered} {
-		if _, err := flowdb.InsertBusMessageIfAbsent(db, m); err != nil {
+	for _, m := range []*store.BusMessage{asked, answered} {
+		if _, err := store.InsertBusMessageIfAbsent(db, m); err != nil {
 			t.Fatalf("seed message %s: %v", m.ID, err)
 		}
 	}

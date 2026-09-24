@@ -1,28 +1,29 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestCmdUpdateTaskWorkDir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "ut-wd")
 
 	newDir := filepath.Join(t.TempDir(), "new-spot")
 	if rc := cmdUpdate([]string{"task", "ut-wd", "--work-dir", newDir, "--mkdir"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "ut-wd")
+	db := openTestDB(t)
+	task, _ := store.GetTask(db, "ut-wd")
 	if task.WorkDir != newDir {
 		t.Errorf("work_dir = %q, want %q", task.WorkDir, newDir)
 	}
 }
 
 func TestCmdUpdateTaskWorkDirMissingNoMkdir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "ut-nomkdir")
 
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
@@ -32,7 +33,7 @@ func TestCmdUpdateTaskWorkDirMissingNoMkdir(t *testing.T) {
 }
 
 func TestCmdUpdateTaskBothFields(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "ut-both")
 
 	newDir := filepath.Join(t.TempDir(), "combo")
@@ -40,8 +41,8 @@ func TestCmdUpdateTaskBothFields(t *testing.T) {
 		"--priority", "high", "--work-dir", newDir, "--mkdir"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "ut-both")
+	db := openTestDB(t)
+	task, _ := store.GetTask(db, "ut-both")
 	if task.Priority != "high" {
 		t.Errorf("priority = %q, want high", task.Priority)
 	}
@@ -51,7 +52,7 @@ func TestCmdUpdateTaskBothFields(t *testing.T) {
 }
 
 func TestCmdUpdateTaskRequiresFlag(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "ut-noop")
 
 	if rc := cmdUpdate([]string{"task", "ut-noop"}); rc != 2 {
@@ -60,21 +61,21 @@ func TestCmdUpdateTaskRequiresFlag(t *testing.T) {
 }
 
 func TestCmdUpdateTaskUnknownTask(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdUpdate([]string{"task", "nope", "--priority", "high"}); rc != 1 {
 		t.Errorf("rc=%d, want 1 for unknown task", rc)
 	}
 }
 
 func TestCmdUpdateUnknownTarget(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdUpdate([]string{"playbook", "foo"}); rc != 2 {
 		t.Errorf("rc=%d, want 2 for unknown update target", rc)
 	}
 }
 
 func TestCmdUpdateTaskRejectsLeadingDashAsRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdUpdate([]string{"task", "--help"})
 	if rc != 2 {
 		t.Errorf("update task --help: rc=%d, want 2 (usage error)", rc)
@@ -82,7 +83,7 @@ func TestCmdUpdateTaskRejectsLeadingDashAsRef(t *testing.T) {
 }
 
 func TestCmdUpdateProjectRejectsLeadingDashAsRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdUpdate([]string{"project", "--help"})
 	if rc != 2 {
 		t.Errorf("update project --help: rc=%d, want 2 (usage error)", rc)
@@ -90,7 +91,7 @@ func TestCmdUpdateProjectRejectsLeadingDashAsRef(t *testing.T) {
 }
 
 func TestCmdUpdateProjectPriority(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Proj", "--slug", "proj", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
@@ -100,8 +101,8 @@ func TestCmdUpdateProjectPriority(t *testing.T) {
 		t.Fatalf("update project --priority rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	p, err := flowdb.GetProject(db, "proj")
+	db := openTestDB(t)
+	p, err := store.GetProject(db, "proj")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestCmdUpdateProjectPriority(t *testing.T) {
 }
 
 func TestCmdUpdateProjectRejectsBadPriority(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Proj2", "--slug", "proj2", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
@@ -122,7 +123,7 @@ func TestCmdUpdateProjectRejectsBadPriority(t *testing.T) {
 }
 
 func TestCmdUpdateProjectRequiresFlag(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Proj3", "--slug", "proj3", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
@@ -133,17 +134,17 @@ func TestCmdUpdateProjectRequiresFlag(t *testing.T) {
 }
 
 func TestCmdUpdateProjectUnknown(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdUpdate([]string{"project", "nope", "--priority", "high"}); rc != 1 {
 		t.Errorf("rc=%d, want 1 for unknown project", rc)
 	}
 }
 
 func TestUpdateTask_StatusChangeSetsStatusChangedAt(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "status-change-task")
 
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	const oldTimestamp = "2020-01-01T00:00:00Z"
 	if _, err := db.Exec(`UPDATE tasks SET status_changed_at = ? WHERE slug = ?`, oldTimestamp, "status-change-task"); err != nil {
 		t.Fatal(err)
@@ -153,7 +154,7 @@ func TestUpdateTask_StatusChangeSetsStatusChangedAt(t *testing.T) {
 		t.Fatalf("update task --status rc=%d", rc)
 	}
 
-	after, err := flowdb.GetTask(db, "status-change-task")
+	after, err := store.GetTask(db, "status-change-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestUpdateTask_StatusChangeSetsStatusChangedAt(t *testing.T) {
 	if rc := cmdUpdate([]string{"task", "status-change-task", "--status", "in-progress"}); rc != 0 {
 		t.Fatalf("update task --status (same value) rc=%d", rc)
 	}
-	stillSame, err := flowdb.GetTask(db, "status-change-task")
+	stillSame, err := store.GetTask(db, "status-change-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestUpdateTask_StatusChangeSetsStatusChangedAt(t *testing.T) {
 }
 
 func TestUpdateTask_StatusPriorityAssigneeDueWaitingTags(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "sample-task")
 
 	rc := cmdUpdate([]string{"task", "sample-task",
@@ -193,8 +194,8 @@ func TestUpdateTask_StatusPriorityAssigneeDueWaitingTags(t *testing.T) {
 		t.Fatalf("update task rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "sample-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "sample-task")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -213,7 +214,7 @@ func TestUpdateTask_StatusPriorityAssigneeDueWaitingTags(t *testing.T) {
 	if !task.WaitingOn.Valid || task.WaitingOn.String != "design review" {
 		t.Errorf("WaitingOn = %+v, want 'design review'", task.WaitingOn)
 	}
-	tags, _ := flowdb.ListTagsForTask(db, "sample-task")
+	tags, _ := store.ListTagsForTask(db, "sample-task")
 	if len(tags) != 1 || tags[0] != "urgent" {
 		t.Errorf("tags = %v, want [urgent]", tags)
 	}
@@ -225,7 +226,7 @@ func TestUpdateTask_StatusPriorityAssigneeDueWaitingTags(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("update task (clears) rc=%d", rc)
 	}
-	task, _ = flowdb.GetTask(db, "sample-task")
+	task, _ = store.GetTask(db, "sample-task")
 	if task.WaitingOn.Valid {
 		t.Errorf("WaitingOn should be cleared, got %+v", task.WaitingOn)
 	}
@@ -235,14 +236,14 @@ func TestUpdateTask_StatusPriorityAssigneeDueWaitingTags(t *testing.T) {
 	if task.Assignee.Valid {
 		t.Errorf("Assignee should be cleared, got %+v", task.Assignee)
 	}
-	tags, _ = flowdb.ListTagsForTask(db, "sample-task")
+	tags, _ = store.ListTagsForTask(db, "sample-task")
 	if len(tags) != 0 {
 		t.Errorf("tags after --remove-tag urgent should be empty, got %v", tags)
 	}
 }
 
 func TestUpdateTask_SessionIDFlagNoLongerExists(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "sample-task-2")
 	rc := cmdUpdate([]string{"task", "sample-task-2", "--session-id", "11111111-1111-4111-8111-111111111111"})
 	if rc != 2 {
@@ -251,7 +252,7 @@ func TestUpdateTask_SessionIDFlagNoLongerExists(t *testing.T) {
 }
 
 func TestUpdateTask_WaitingRejectsProjectRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Proj", "--slug", "proj", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
@@ -259,5 +260,60 @@ func TestUpdateTask_WaitingRejectsProjectRef(t *testing.T) {
 	rc := cmdUpdate([]string{"task", "proj", "--waiting", "someone"})
 	if rc == 0 {
 		t.Error("update task --waiting on a project ref should fail, got rc=0")
+	}
+}
+
+func TestUpdateTaskRenameAndMoveBetweenProjects(t *testing.T) {
+	setupRoot(t)
+	for _, slug := range []string{"proj-a", "proj-b"} {
+		if rc := cmdAdd([]string{"project", strings.ToUpper(slug), "--slug", slug, "--work-dir", t.TempDir()}); rc != 0 {
+			t.Fatalf("add project %s rc=%d", slug, rc)
+		}
+	}
+	if rc := cmdAdd([]string{"task", "Original name", "--slug", "mover", "--project", "proj-a"}); rc != 0 {
+		t.Fatal("add task")
+	}
+	db := openTestDB(t)
+
+	if rc := cmdUpdate([]string{"task", "mover", "--name", "Better name", "--project", "proj-b"}); rc != 0 {
+		t.Fatalf("update rc=%d", rc)
+	}
+	task, _ := store.GetTask(db, "mover")
+	if task.Name != "Better name" || task.Slug != "mover" || task.ProjectSlug.String != "proj-b" {
+		t.Errorf("after update: %+v", task)
+	}
+
+	if rc := cmdUpdate([]string{"task", "mover", "--clear-project"}); rc != 0 {
+		t.Fatalf("clear-project rc=%d", rc)
+	}
+	if task, _ = store.GetTask(db, "mover"); task.ProjectSlug.Valid {
+		t.Errorf("project not cleared: %+v", task.ProjectSlug)
+	}
+
+	for name, args := range map[string][]string{
+		"unknown project":  {"task", "mover", "--project", "nope"},
+		"blank name":       {"task", "mover", "--name", "  "},
+		"conflicting flag": {"task", "mover", "--project", "proj-a", "--clear-project"},
+	} {
+		if rc := cmdUpdate(args); rc == 0 {
+			t.Errorf("%s: expected failure", name)
+		}
+	}
+	if task, _ = store.GetTask(db, "mover"); task.Name != "Better name" || task.ProjectSlug.Valid {
+		t.Errorf("failed updates must not change anything: %+v", task)
+	}
+}
+
+func TestUpdateProjectRename(t *testing.T) {
+	setupRoot(t)
+	if rc := cmdAdd([]string{"project", "Old", "--slug", "p", "--work-dir", t.TempDir()}); rc != 0 {
+		t.Fatal("add project")
+	}
+	if rc := cmdUpdate([]string{"project", "p", "--name", "New name"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	p, _ := store.GetProject(openTestDB(t), "p")
+	if p.Name != "New name" || p.Slug != "p" {
+		t.Errorf("project = %+v", p)
 	}
 }

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 func TestCmdInboxPop_ConsumesOldestFirst(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 
@@ -44,7 +44,7 @@ func TestCmdInboxPop_ConsumesOldestFirst(t *testing.T) {
 }
 
 func TestCmdInboxPop_MarksMessageRead(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 	if rc := cmdMessage([]string{"user/worker", "hello"}); rc != 0 {
@@ -56,8 +56,8 @@ func TestCmdInboxPop_MarksMessageRead(t *testing.T) {
 		t.Fatalf("cmdInboxPop rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	msgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{TaskSlug: "worker"}, true)
+	db := openTestDB(t)
+	msgs, err := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "worker"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCmdInboxPop_MarksMessageRead(t *testing.T) {
 	if msgs[0].Mail != "read" {
 		t.Errorf("Mail = %q, want read", msgs[0].Mail)
 	}
-	unreadOnly, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{TaskSlug: "worker"}, false)
+	unreadOnly, err := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "worker"}, false)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCmdInboxPop_MarksMessageRead(t *testing.T) {
 }
 
 func TestCmdInboxPop_KeepUnreadPeeksWithoutConsuming(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 	if rc := cmdMessage([]string{"user/worker", "peek me"}); rc != 0 {
@@ -98,8 +98,8 @@ func TestCmdInboxPop_KeepUnreadPeeksWithoutConsuming(t *testing.T) {
 		t.Errorf("expected message still present, got %q", out)
 	}
 
-	db := openFlowDB(t)
-	unread, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{TaskSlug: "worker"}, false)
+	db := openTestDB(t)
+	unread, err := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "worker"}, false)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestCmdInboxPop_KeepUnreadPeeksWithoutConsuming(t *testing.T) {
 }
 
 func TestCmdInboxPop_WaitTimesOutSilentlyWithJSON(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	bindSession(t, "worker", "77777777-7777-4777-8777-777777777777")
 
@@ -133,7 +133,7 @@ func TestCmdInboxPop_WaitTimesOutSilentlyWithJSON(t *testing.T) {
 }
 
 func TestCmdInboxPop_WaitReturnsAsSoonAsMessageArrives(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	bindSession(t, "worker", "88888888-8888-4888-8888-888888888888")
 
@@ -166,7 +166,7 @@ func TestCmdInboxPop_WaitReturnsAsSoonAsMessageArrives(t *testing.T) {
 }
 
 func TestCmdInboxRead_MarksByID(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	bindSession(t, "worker", "99999999-9999-4999-8999-999999999999")
 	if rc := cmdMessage([]string{"user", "reply text"}); rc != 0 {
@@ -185,8 +185,8 @@ func TestCmdInboxRead_MarksByID(t *testing.T) {
 		t.Fatalf("cmdInboxRead rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	m, err := flowdb.GetBusMessage(db, id)
+	db := openTestDB(t)
+	m, err := store.GetBusMessage(db, id)
 	if err != nil {
 		t.Fatalf("GetBusMessage: %v", err)
 	}
@@ -196,14 +196,14 @@ func TestCmdInboxRead_MarksByID(t *testing.T) {
 }
 
 func TestCmdInboxRead_UnknownIDErrors(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdInboxRead([]string{"deadbeef"}); rc == 0 {
 		t.Error("expected error for unknown id, got rc=0")
 	}
 }
 
 func TestCmdInbox_DispatchesSubcommands(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 	if rc := cmdMessage([]string{"user/worker", "hi"}); rc != 0 {
@@ -226,9 +226,9 @@ func TestCmdInbox_DispatchesSubcommands(t *testing.T) {
 		t.Fatalf("cmdInbox pop rc=%d", rc)
 	}
 
-	// stats is explicitly out of scope.
-	if rc := cmdInbox([]string{"stats"}); rc == 0 {
-		t.Error("expected inbox stats to be rejected as out of scope")
+	// stats reports wait-time metrics.
+	if rc := cmdInbox([]string{"stats"}); rc != 0 {
+		t.Errorf("cmdInbox stats rc=%d", rc)
 	}
 
 	// unknown subcommand errors instead of silently listing.

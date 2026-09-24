@@ -1,7 +1,7 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +41,7 @@ func TestCmdWorkdirAddManualName(t *testing.T) {
 	if rc := cmdWorkdir([]string{"add", wdPath, "--name", "myrepo"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
-	w, err := flowdb.GetWorkdir(db, wdPath)
+	w, err := store.GetWorkdir(db, wdPath)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestCmdWorkdirAddDetectsGitRemote(t *testing.T) {
 	if rc := cmdWorkdir([]string{"add", wdPath}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
-	w, err := flowdb.GetWorkdir(db, wdPath)
+	w, err := store.GetWorkdir(db, wdPath)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestCmdWorkdirList(t *testing.T) {
 	if _, err := db.Exec("UPDATE workdirs SET last_used_at='2000-01-01T00:00:00Z' WHERE path=?", a); err != nil {
 		t.Fatal(err)
 	}
-	list, err := flowdb.ListWorkdirs(db)
+	list, err := store.ListWorkdirs(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestCmdWorkdirScanAdd(t *testing.T) {
 	if rc := cmdWorkdir([]string{"scan", scanRoot, "--add"}); rc != 0 {
 		t.Fatalf("scan --add rc=%d", rc)
 	}
-	w, err := flowdb.GetWorkdir(db, repo)
+	w, err := store.GetWorkdir(db, repo)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

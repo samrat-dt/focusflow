@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 )
@@ -61,12 +61,12 @@ func addPlaybook(args []string) int {
 		return 1
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -76,7 +76,7 @@ func addPlaybook(args []string) int {
 	// Resolve project if supplied.
 	var projectSlug sql.NullString
 	if *project != "" {
-		p, err := flowdb.GetProject(db, *project)
+		p, err := store.GetProject(db, *project)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				fmt.Fprintf(os.Stderr, "error: project %q not found\n", *project)
@@ -104,37 +104,37 @@ func addPlaybook(args []string) int {
 		}
 	}
 
-	pb := &flowdb.Playbook{
+	pb := &store.Playbook{
 		Slug:        slug,
 		Name:        name,
 		ProjectSlug: projectSlug,
 		WorkDir:     abs,
 	}
-	if err := flowdb.UpsertPlaybook(db, pb); err != nil {
+	if err := store.UpsertPlaybook(db, pb); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	pbDir := filepath.Join(root, "playbooks", slug)
-	if err := os.MkdirAll(filepath.Join(pbDir, "updates"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(pbDir, "updates"), privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	briefPath := filepath.Join(pbDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
 		stub := fmt.Sprintf(playbookBriefStub, name, abs, slug)
-		if err := os.WriteFile(briefPath, []byte(stub), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(stub), privFile); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 
-	if err := flowdb.UpsertWorkdir(db, abs, "", "", ""); err != nil {
+	if err := store.UpsertWorkdir(db, abs, "", "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

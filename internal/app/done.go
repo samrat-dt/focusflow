@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"io"
 	"os"
 	"os/exec"
@@ -42,12 +42,12 @@ func cmdDone(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -59,7 +59,7 @@ func cmdDone(args []string) int {
 		return rc
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	res, err := db.Exec(
 		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=?`,
 		now, now, task.Slug,

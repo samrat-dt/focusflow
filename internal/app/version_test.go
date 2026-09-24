@@ -32,7 +32,7 @@ func TestSkillInstallWritesVersionSidecar(t *testing.T) {
 }
 
 func TestCmdInitWritesVersionSidecar(t *testing.T) {
-	initTempFlowRoot(t)
+	initTempRoot(t)
 	withVersion(t, "v1.2.3")
 
 	if rc := cmdInit(nil); rc != 0 {

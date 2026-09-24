@@ -1,9 +1,12 @@
-package flowdb
+package store
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -398,9 +401,7 @@ func TestMigrationIdempotent(t *testing.T) {
 
 // TestNativeRowsDefaultToSourceNative pins the default: any row inserted
 // through the normal `focusflow add` path (no explicit `source` column)
-// is 'native', never 'flow-mirror'. That default is what lets
-// UpsertMirroredProject/UpsertMirroredTask tell a real collision apart
-// from a prior mirror run.
+// is 'native' (the only value in use).
 func TestNativeRowsDefaultToSourceNative(t *testing.T) {
 	db := openTempDB(t)
 	insertProject(t, db, "p", "P", "/tmp/p", "medium")
@@ -419,219 +420,6 @@ func TestNativeRowsDefaultToSourceNative(t *testing.T) {
 	}
 	if tk.Source != "native" {
 		t.Errorf("task.Source = %q, want native", tk.Source)
-	}
-}
-
-// TestUpsertMirroredProjectInsertsThenRefreshes pins the create-then-
-// refresh contract in isolation from the app-layer mirror orchestration
-// (see internal/app/mirror_test.go for the full session-start path).
-func TestUpsertMirroredProjectInsertsThenRefreshes(t *testing.T) {
-	db := openTempDB(t)
-
-	applied, err := UpsertMirroredProject(db, "mp", "Mirrored Project", "active", "medium", "/tmp/mp")
-	if err != nil {
-		t.Fatalf("first upsert: %v", err)
-	}
-	if !applied {
-		t.Fatal("expected applied=true on first insert")
-	}
-
-	applied, err = UpsertMirroredProject(db, "mp", "Renamed", "done", "high", "/tmp/mp2")
-	if err != nil {
-		t.Fatalf("second upsert: %v", err)
-	}
-	if !applied {
-		t.Fatal("expected applied=true on refresh of a mirror-owned row")
-	}
-
-	p, err := GetProject(db, "mp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "Renamed" || p.Status != "done" || p.Priority != "high" || p.WorkDir != "/tmp/mp2" {
-		t.Errorf("refresh did not apply: %+v", p)
-	}
-	if p.Source != "flow-mirror" {
-		t.Errorf("Source = %q, want flow-mirror", p.Source)
-	}
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM projects WHERE slug = 'mp'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 row, got %d", count)
-	}
-}
-
-// TestUpsertMirroredProjectSkipsNativeCollision pins the guard: a native
-// row is left completely untouched and reports applied=false.
-func TestUpsertMirroredProjectSkipsNativeCollision(t *testing.T) {
-	db := openTempDB(t)
-	insertProject(t, db, "shared", "Native Name", "/native/dir", "high")
-
-	applied, err := UpsertMirroredProject(db, "shared", "Flow Name", "done", "low", "/flow/dir")
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if applied {
-		t.Error("expected applied=false against a native row")
-	}
-
-	p, err := GetProject(db, "shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "Native Name" || p.WorkDir != "/native/dir" || p.Source != "native" {
-		t.Errorf("native project was modified: %+v", p)
-	}
-}
-
-// TestUpsertMirroredTaskInsertsThenRefreshes mirrors
-// TestUpsertMirroredProjectInsertsThenRefreshes for the tasks table,
-// including the floating-task (empty projectSlug) path.
-func TestUpsertMirroredTaskInsertsThenRefreshes(t *testing.T) {
-	db := openTempDB(t)
-
-	applied, err := UpsertMirroredTask(db, "mt", "Mirrored Task", "", "backlog", "low", "/tmp/mt")
-	if err != nil {
-		t.Fatalf("first upsert: %v", err)
-	}
-	if !applied {
-		t.Fatal("expected applied=true on first insert")
-	}
-
-	applied, err = UpsertMirroredTask(db, "mt", "Renamed Task", "", "in-progress", "high", "/tmp/mt2")
-	if err != nil {
-		t.Fatalf("second upsert: %v", err)
-	}
-	if !applied {
-		t.Fatal("expected applied=true on refresh of a mirror-owned row")
-	}
-
-	tk, err := GetTask(db, "mt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tk.Name != "Renamed Task" || tk.Status != "in-progress" || tk.Priority != "high" || tk.WorkDir != "/tmp/mt2" {
-		t.Errorf("refresh did not apply: %+v", tk)
-	}
-	if tk.Source != "flow-mirror" {
-		t.Errorf("Source = %q, want flow-mirror", tk.Source)
-	}
-	if tk.ProjectSlug.Valid {
-		t.Errorf("expected floating task, got project_slug=%+v", tk.ProjectSlug)
-	}
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE slug = 'mt'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 row, got %d", count)
-	}
-}
-
-// TestUpsertMirroredTaskSkipsNativeCollision is the task-table equivalent
-// of TestUpsertMirroredProjectSkipsNativeCollision.
-func TestUpsertMirroredTaskSkipsNativeCollision(t *testing.T) {
-	db := openTempDB(t)
-	insertTask(t, db, "shared-task", "Native Task", "in-progress", "high", "/native/dir", nil)
-
-	applied, err := UpsertMirroredTask(db, "shared-task", "Flow Task", "", "done", "low", "/flow/dir")
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if applied {
-		t.Error("expected applied=false against a native row")
-	}
-
-	tk, err := GetTask(db, "shared-task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tk.Name != "Native Task" || tk.Status != "in-progress" || tk.Source != "native" {
-		t.Errorf("native task was modified: %+v", tk)
-	}
-}
-
-// TestSetMirroredProjectArchivedAtAppliesToMirrorRow pins the archived_at
-// backfill path used by the one-time migration command: it stamps
-// archived_at on a mirror-owned project row.
-func TestSetMirroredProjectArchivedAtAppliesToMirrorRow(t *testing.T) {
-	db := openTempDB(t)
-	if _, err := UpsertMirroredProject(db, "mp", "Mirrored", "done", "low", "/tmp/mp"); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-
-	if err := SetMirroredProjectArchivedAt(db, "mp", "2026-01-01T00:00:00Z"); err != nil {
-		t.Fatalf("SetMirroredProjectArchivedAt: %v", err)
-	}
-
-	p, err := GetProject(db, "mp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !p.ArchivedAt.Valid || p.ArchivedAt.String != "2026-01-01T00:00:00Z" {
-		t.Errorf("ArchivedAt = %+v, want 2026-01-01T00:00:00Z", p.ArchivedAt)
-	}
-}
-
-// TestSetMirroredProjectArchivedAtSkipsNativeCollision mirrors the
-// UpsertMirrored* native-collision guard: a native row's archived_at is
-// never touched by the migration.
-func TestSetMirroredProjectArchivedAtSkipsNativeCollision(t *testing.T) {
-	db := openTempDB(t)
-	insertProject(t, db, "shared", "Native Name", "/native/dir", "high")
-
-	if err := SetMirroredProjectArchivedAt(db, "shared", "2026-01-01T00:00:00Z"); err != nil {
-		t.Fatalf("SetMirroredProjectArchivedAt: %v", err)
-	}
-
-	p, err := GetProject(db, "shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.ArchivedAt.Valid {
-		t.Errorf("expected native project's ArchivedAt untouched, got %+v", p.ArchivedAt)
-	}
-}
-
-// TestSetMirroredTaskArchivedAtAppliesToMirrorRow is the task-table
-// equivalent of TestSetMirroredProjectArchivedAtAppliesToMirrorRow.
-func TestSetMirroredTaskArchivedAtAppliesToMirrorRow(t *testing.T) {
-	db := openTempDB(t)
-	if _, err := UpsertMirroredTask(db, "mt", "Mirrored Task", "", "done", "low", "/tmp/mt"); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-
-	if err := SetMirroredTaskArchivedAt(db, "mt", "2026-02-02T00:00:00Z"); err != nil {
-		t.Fatalf("SetMirroredTaskArchivedAt: %v", err)
-	}
-
-	tk, err := GetTask(db, "mt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !tk.ArchivedAt.Valid || tk.ArchivedAt.String != "2026-02-02T00:00:00Z" {
-		t.Errorf("ArchivedAt = %+v, want 2026-02-02T00:00:00Z", tk.ArchivedAt)
-	}
-}
-
-func TestSetMirroredTaskArchivedAtSkipsNativeCollision(t *testing.T) {
-	db := openTempDB(t)
-	insertTask(t, db, "shared-task", "Native Task", "in-progress", "high", "/native/dir", nil)
-
-	if err := SetMirroredTaskArchivedAt(db, "shared-task", "2026-02-02T00:00:00Z"); err != nil {
-		t.Fatalf("SetMirroredTaskArchivedAt: %v", err)
-	}
-
-	tk, err := GetTask(db, "shared-task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tk.ArchivedAt.Valid {
-		t.Errorf("expected native task's ArchivedAt untouched, got %+v", tk.ArchivedAt)
 	}
 }
 
@@ -769,5 +557,131 @@ func TestListTasks_FilterByTags_CaseInsensitive(t *testing.T) {
 	}
 	if len(tasks) != 1 || tasks[0].Slug != "upper-tagged" {
 		t.Errorf("ListTasks with Tags=[urgent] should case-insensitively match stored tag 'Urgent', got %+v", tasks)
+	}
+}
+
+func TestOpenDBWALForeignKeysAndConcurrentWriters(t *testing.T) {
+	db, err := OpenDB(filepath.Join(t.TempDir(), "focusflow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+		t.Fatalf("journal_mode = %q (%v), want wal", mode, err)
+	}
+
+	// foreign_keys must hold on EVERY pooled connection, not just one.
+	db.SetMaxOpenConns(4)
+	conns := make([]*sql.Conn, 0, 4)
+	for i := 0; i < 4; i++ {
+		c, err := db.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+		var fk int
+		if err := c.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+			t.Fatalf("conn %d foreign_keys = %d (%v)", i, fk, err)
+		}
+	}
+	for _, c := range conns {
+		c.Close()
+	}
+
+	// Concurrent read-then-write transactions must serialize, never fail BUSY.
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tx, err := db.Begin()
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer tx.Rollback()
+			var n int
+			if err := tx.QueryRow("SELECT COUNT(*) FROM workdirs").Scan(&n); err != nil {
+				errs <- err
+				return
+			}
+			if _, err := tx.Exec("INSERT INTO workdirs (path, created_at) VALUES (?, ?)", fmt.Sprintf("/p/%d", i), NowISO()); err != nil {
+				errs <- err
+				return
+			}
+			errs <- tx.Commit()
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent tx failed: %v", err)
+		}
+	}
+}
+
+func userVersion(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var v int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestSchemaVersioning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "focusflow.db")
+
+	// Fresh DB is stamped current.
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := userVersion(t, db); v != SchemaVersion {
+		t.Fatalf("fresh user_version = %d, want %d", v, SchemaVersion)
+	}
+
+	// A current DB is not re-migrated: a dropped table stays dropped.
+	if _, err := db.Exec("DROP TABLE bus_watches"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name='bus_watches'").Scan(&n)
+	if n != 0 {
+		t.Error("current-version DB was needlessly re-migrated")
+	}
+
+	// A pre-versioning DB (user_version 0) is upgraded and stamped.
+	if _, err := db.Exec("PRAGMA user_version = 0"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name='bus_watches'").Scan(&n)
+	if n != 1 || userVersion(t, db) != SchemaVersion {
+		t.Errorf("v0 DB not upgraded (bus_watches=%d, version=%d)", n, userVersion(t, db))
+	}
+
+	// A DB from the future is refused, not silently opened.
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion+5)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := OpenDB(path); err == nil {
+		t.Error("expected ErrSchemaTooNew")
+	} else if _, ok := err.(ErrSchemaTooNew); !ok {
+		t.Errorf("err = %T %v, want ErrSchemaTooNew", err, err)
 	}
 }

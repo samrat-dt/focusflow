@@ -2,7 +2,7 @@ package app
 
 import (
 	"errors"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"testing"
 )
 
@@ -27,12 +27,12 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 }
 
 func TestCmdDone_MarksAutoRunCompleted(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubClaudeRunner(t, nil)
 	seedTask(t, "auto-done-task")
 
-	db := openFlowDB(t)
-	now := flowdb.NowISO()
+	db := openTestDB(t)
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='running', auto_run_pid=1, auto_run_started=? WHERE slug='auto-done-task'`,
 		now,
@@ -44,7 +44,7 @@ func TestCmdDone_MarksAutoRunCompleted(t *testing.T) {
 		t.Fatalf("done rc=%d", rc)
 	}
 
-	task, err := flowdb.GetTask(db, "auto-done-task")
+	task, err := store.GetTask(db, "auto-done-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCmdDone_MarksAutoRunCompleted(t *testing.T) {
 }
 
 func TestCmdDoneRejectsLeadingDashAsRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdDone([]string{"--help"})
 	if rc != 2 {
 		t.Errorf("done --help: rc=%d, want 2 (usage error)", rc)
@@ -65,7 +65,7 @@ func TestCmdDoneRejectsLeadingDashAsRef(t *testing.T) {
 }
 
 func TestCmdDoneHappyPath(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubClaudeRunner(t, nil) // no session, won't fire — but safe
 	if rc := cmdAdd([]string{"task", "Some Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
@@ -73,8 +73,8 @@ func TestCmdDoneHappyPath(t *testing.T) {
 	if rc := cmdDone([]string{"some-task"}); rc != 0 {
 		t.Fatalf("done rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "some-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "some-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestCmdDoneHappyPath(t *testing.T) {
 }
 
 func TestCmdDoneUnknownRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubClaudeRunner(t, nil)
 	if rc := cmdDone([]string{"nope"}); rc == 0 {
 		t.Error("expected rc!=0 for unknown task")
@@ -92,7 +92,7 @@ func TestCmdDoneUnknownRef(t *testing.T) {
 }
 
 func TestCmdDoneIdempotent(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubClaudeRunner(t, nil)
 	if rc := cmdAdd([]string{"task", "Idem"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
@@ -120,7 +120,7 @@ func TestCmdDoneNoArgs(t *testing.T) {
 // session_id does not trigger a sweep. Done flips status and returns
 // immediately; the runner is never called.
 func TestCmdDoneSkipsSweepWhenNoSession(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	calls := stubClaudeRunner(t, errors.New("should not be called"))
 	if rc := cmdAdd([]string{"task", "No Session Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
@@ -137,16 +137,16 @@ func TestCmdDoneSkipsSweepWhenNoSession(t *testing.T) {
 // claude runner exactly once with the task slug and a sweep prompt
 // when the task has a session_id, and returns rc=0 on success.
 func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	calls := stubClaudeRunner(t, nil)
 	if rc := cmdAdd([]string{"task", "Has Session"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	// Manually populate session_id so the sweep gate fires.
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	if _, err := db.Exec(
 		`UPDATE tasks SET session_id=?, session_started=? WHERE slug=?`,
-		"deadbeef-uuid", flowdb.NowISO(), "has-session",
+		"deadbeef-uuid", store.NowISO(), "has-session",
 	); err != nil {
 		t.Fatalf("seed session_id: %v", err)
 	}
@@ -179,15 +179,15 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 // from the sweep runner does NOT fail the done command — the status
 // flip is the durability boundary, the sweep is best-effort.
 func TestCmdDoneSweepFailureStillSucceeds(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubClaudeRunner(t, errors.New("exec: claude: executable file not found in $PATH"))
 	if rc := cmdAdd([]string{"task", "Sweep Fail"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	if _, err := db.Exec(
 		`UPDATE tasks SET session_id=?, session_started=? WHERE slug=?`,
-		"sf-uuid", flowdb.NowISO(), "sweep-fail",
+		"sf-uuid", store.NowISO(), "sweep-fail",
 	); err != nil {
 		t.Fatalf("seed session_id: %v", err)
 	}
@@ -197,8 +197,8 @@ func TestCmdDoneSweepFailureStillSucceeds(t *testing.T) {
 		t.Errorf("done rc=%d, want 0 even when sweep fails", rc)
 	}
 	// Status must still be flipped despite the sweep failure.
-	db = openFlowDB(t)
-	task, err := flowdb.GetTask(db, "sweep-fail")
+	db = openTestDB(t)
+	task, err := store.GetTask(db, "sweep-fail")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,13 +28,13 @@ func Run(args []string) int {
 	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help":
 		// no auto-upgrade
 	default:
+		ensureRootPrivate()
 		maybeAutoUpgradeSkill()
 	}
 
 	switch cmd {
 	case "--version", "-v", "version":
-		fmt.Println(Version)
-		return 0
+		return cmdVersion(rest)
 	case "init":
 		return cmdInit(rest)
 	case "add":
@@ -69,10 +69,24 @@ func Run(args []string) int {
 		return cmdMessage(rest)
 	case "broadcast", "post":
 		return cmdBroadcast(rest)
+	case "owner":
+		return cmdOwner(rest)
+	case "sync":
+		return cmdSync(rest)
+	case "search":
+		return cmdSearch(rest)
+	case "doctor":
+		return cmdDoctor(rest)
+	case "backup":
+		return cmdBackup(rest)
+	case "restore":
+		return cmdRestore(rest)
+	case "stats":
+		return cmdStats(rest)
+	case "watch":
+		return cmdWatch(rest)
 	case "inbox":
 		return cmdInbox(rest)
-	case "migrate-from-flow":
-		return cmdMigrateFromFlow(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -140,9 +154,21 @@ Message bus:
   focusflow inbox [--as <assignee>] [--all] [--json]
   focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
   focusflow inbox read <id> [--json]
+  focusflow inbox stats [--as <assignee>]   (wait-time metrics)
+  focusflow add owner "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  focusflow owner list|show <slug>|start <slug>|pause <slug>|retire <slug> [--delete]
+  focusflow owner next <slug> --in <dur> | --at <when>   |   owner tick <slug> [--auto]   |   owner tick-due
+  focusflow owner scheduler install|uninstall|status   (opt-in launchd job that runs tick-due)
+  focusflow sync [init --remote <url> | status | push]   (git-backed sync of briefs/updates/KB; opt-in)
+  focusflow search <query> [--in names,briefs,updates,notes,kb] [--project <slug>] [--regex] [--json]
+  focusflow doctor [--fix] [--json]           (health check)
+  focusflow backup [--out <dir>] [--keep N]   (consistent snapshot of ~/.focusflow)
+  focusflow restore <archive.tar.gz> --force
+  focusflow version
+  focusflow stats [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
+  focusflow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
 
 Migration:
-  focusflow migrate-from-flow   (one-time bulk backfill of every real-flow project/task/message)
 
 Workdirs:
   focusflow workdir list

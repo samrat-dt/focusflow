@@ -1,10 +1,12 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -51,13 +53,6 @@ func cmdHookSessionStart(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-
-	// Best-effort, one-way flow→focusflow mirror. Runs on EVERY session
-	// start regardless of $FOCUSFLOW_TASK — a session can be bound in real
-	// flow (and therefore mirror-eligible) whether or not focusflow itself
-	// spawned it. See mirror.go for the full contract: never blocks, never
-	// writes to real flow, never touches a focusflow-native row.
-	mirrorFromFlow(currentHarnessSessionID())
 
 	slug := os.Getenv("FOCUSFLOW_TASK")
 	if slug == "" {
@@ -135,12 +130,11 @@ func emitSessionStartContext(ctx string) int {
 
 // cmdHookUserPromptSubmit emits a Claude Code UserPromptSubmit hook
 // response. Wired via ~/.claude/settings.json so EVERY user prompt in a
-// bound session re-injects a one-line anchor naming the task — ported
-// from real flow's own UserPromptSubmit hook (observed directly: same
-// hookSpecificOutput shape, same "§4.11/§4.7" citation), since without
-// this reminder scope-creep detection (§4.11) and close-out offers
-// (§4.7) only ever get checked once, at session start, and silently
-// drift out of the agent's attention over a long session.
+// bound session re-injects a one-line anchor naming the task (with the
+// skill's "§4.11/§4.7" citation), since without this reminder
+// scope-creep detection (§4.11) and close-out offers (§4.7) only ever get
+// checked once, at session start, and silently drift out of the agent's
+// attention over a long session.
 //
 // Silent (no output) when the session isn't bound to any task — the
 // anchor only makes sense once there's a task to name.
@@ -150,11 +144,11 @@ func cmdHookUserPromptSubmit(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		return 0 // focusflow not initialized — nothing to anchor
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		return 0
 	}
@@ -164,7 +158,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if slug == "" {
 		return 0
 	}
-	task, err := flowdb.GetTask(db, slug)
+	task, err := store.GetTask(db, slug)
 	if err != nil {
 		return 0 // stale $FOCUSFLOW_TASK or dangling session_id — say nothing rather than guess
 	}
@@ -196,12 +190,8 @@ type stopHookInput struct {
 }
 
 // cmdHookStop emits a Claude Code Stop hook response. Wired via
-// ~/.claude/settings.json. Reconstructed from real flow's installed Stop
-// hook (observed via its embedded strings — "flow-bus: the user has
-// just returned... your message [%s] (%q) was answered after %s" and
-// its stop_hook_active / decision / reason fields — real flow's exact
-// source for this hook wasn't available to port directly, so this is a
-// best-effort behavioral match, not a byte-identical copy).
+// ~/.claude/settings.json. The block reason starts with "focusflow-bus:"
+// so an agent (and the skill, §4.18) can recognize it.
 //
 // Purpose: the armed Monitor loop (`focusflow inbox pop --wait`) is the
 // primary way a session notices a reply arrived, but it's a separate
@@ -225,11 +215,11 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		return 0
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		return 0
 	}
@@ -240,13 +230,13 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 
-	asked, err := flowdb.LatestOutgoingMessage(db, slug, "user")
+	asked, err := store.LatestOutgoingMessage(db, slug, "user")
 	if err != nil || asked == nil {
-		return 0
+		return stopBroadcastNudge(db, slug)
 	}
-	reply, err := flowdb.UnreadReplyTo(db, asked.ID)
+	reply, err := store.UnreadReplyTo(db, asked.ID)
 	if err != nil || reply == nil {
-		return 0
+		return stopBroadcastNudge(db, slug)
 	}
 
 	elapsed := "an unknown amount of time"
@@ -287,4 +277,66 @@ func formatHookElapsed(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", h, m)
 	}
 	return fmt.Sprintf("%dm", m)
+}
+
+// nudgeBackoffFor is how long to wait after the Nth nudge before nudging
+// a task about broadcasts again: a quick first follow-up, then
+// progressively rarer.
+func nudgeBackoffFor(attempts int) time.Duration {
+	switch {
+	case attempts <= 0:
+		return 0
+	case attempts == 1:
+		return 2 * time.Minute
+	case attempts == 2:
+		return 10 * time.Minute
+	default:
+		return 30 * time.Minute
+	}
+}
+
+// stopBroadcastNudge is the Stop hook's second job (after the reply
+// nudge): if broadcasts fanned out to this task's mailbox by a watch are
+// still unread and haven't been surfaced to it yet, block the stop once
+// and list them, marking them surfaced so they're not repeated. The
+// bus_nudges row rate-limits this per task with a growing backoff; it is
+// cleared whenever the task consumes mail (`inbox pop`).
+func stopBroadcastNudge(db *sql.DB, slug string) int {
+	pending, err := store.PendingUnsurfacedForTask(db, slug)
+	if err != nil || len(pending) == 0 {
+		return 0
+	}
+	st, err := store.GetNudgeState(db, slug)
+	if err != nil {
+		return 0
+	}
+	if st.Attempts > 0 {
+		if at, perr := time.Parse(time.RFC3339, st.NudgedAt); perr == nil && time.Since(at) < nudgeBackoffFor(st.Attempts) {
+			return 0
+		}
+	}
+
+	var lines []string
+	ids := make([]string, 0, len(pending))
+	for _, m := range pending {
+		from := m.FromAssignee
+		if m.FromTaskSlug.Valid {
+			from = m.FromTaskSlug.String
+		}
+		lines = append(lines, fmt.Sprintf("[%s] %s: %s", m.ID, from, m.Body))
+		ids = append(ids, m.ID)
+	}
+	if err := store.MarkSurfaced(db, slug, ids...); err != nil {
+		return 0
+	}
+	if err := store.RecordNudge(db, slug); err != nil {
+		return 0
+	}
+	reason := "focusflow-bus: broadcasts from tasks you watch are waiting:\n" + strings.Join(lines, "\n") +
+		"\nConsume them with `focusflow inbox pop` (or `focusflow inbox`)."
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"decision": "block", "reason": reason}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
+		return 1
+	}
+	return 0
 }

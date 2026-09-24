@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 func TestCmdAddPlaybookHappyPath(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 
 	rc := cmdAdd([]string{"playbook", "Triage CS inbox", "--work-dir", wd, "--slug", "triage-cs"})
@@ -17,8 +17,8 @@ func TestCmdAddPlaybookHappyPath(t *testing.T) {
 		t.Fatalf("cmdAdd rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	pb, err := flowdb.GetPlaybook(db, "triage-cs")
+	db := openTestDB(t)
+	pb, err := store.GetPlaybook(db, "triage-cs")
 	if err != nil {
 		t.Fatalf("GetPlaybook: %v", err)
 	}
@@ -39,14 +39,14 @@ func TestCmdAddPlaybookHappyPath(t *testing.T) {
 }
 
 func TestCmdAddPlaybookRequiresWorkDir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"playbook", "NoWD"}); rc == 0 {
 		t.Errorf("expected non-zero rc when --work-dir missing")
 	}
 }
 
 func TestCmdAddPlaybookWithProject(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "CS Tools", "--slug", "cs-tools", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -55,8 +55,8 @@ func TestCmdAddPlaybookWithProject(t *testing.T) {
 	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd, "--project", "cs-tools"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	pb, err := flowdb.GetPlaybook(db, "tri")
+	db := openTestDB(t)
+	pb, err := store.GetPlaybook(db, "tri")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCmdAddPlaybookWithProject(t *testing.T) {
 }
 
 func TestCmdAddPlaybookProjectNotFound(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "X", "--slug", "x", "--work-dir", wd, "--project", "nope"}); rc == 0 {
 		t.Errorf("expected non-zero rc when project doesn't exist")

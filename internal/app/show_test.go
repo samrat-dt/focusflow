@@ -3,7 +3,7 @@ package app
 import (
 	"bytes"
 	"database/sql"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,14 +12,14 @@ import (
 	"time"
 )
 
-// withTempFlowRoot points FOCUSFLOW_ROOT at a fresh tempdir and returns the
+// withTempRoot points FOCUSFLOW_ROOT at a fresh tempdir and returns the
 // root. It does NOT open focusflow.db — callers that need a live DB should
 // use showListEditDB(t) which also creates the standard subdirs.
 //
 // This single-value form is shared across Phase 2 test files (agent A's
 // cmd_add_test.go relies on it); tests that also need a DB handle go
 // through showListEditDB.
-func withTempFlowRoot(t *testing.T) string {
+func withTempRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FOCUSFLOW_ROOT", dir)
@@ -31,13 +31,13 @@ func withTempFlowRoot(t *testing.T) string {
 // subtrees, opens focusflow.db, and returns (root, db).
 func showListEditDB(t *testing.T) (string, *sql.DB) {
 	t.Helper()
-	dir := withTempFlowRoot(t)
+	dir := withTempRoot(t)
 	for _, sub := range []string{"projects", "tasks"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 	}
-	db, err := flowdb.OpenDB(filepath.Join(dir, "focusflow.db"))
+	db, err := store.OpenDB(filepath.Join(dir, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestCmdShowTaskUpdatesListedSorted(t *testing.T) {
 func TestCmdShowTaskWorkdirAnnotation(t *testing.T) {
 	root, db := showListEditDB(t)
 	wd := filepath.Join(root, "code", "foo")
-	if err := flowdb.UpsertWorkdir(db, wd, "foo-repo", "", "git@github.com:me/foo.git"); err != nil {
+	if err := store.UpsertWorkdir(db, wd, "foo-repo", "", "git@github.com:me/foo.git"); err != nil {
 		t.Fatal(err)
 	}
 	insertTask(t, db, "t-annot", "T", "backlog", "medium", wd, nil)
@@ -266,7 +266,7 @@ func TestCmdShowTaskWaitingOn(t *testing.T) {
 func TestCmdShowTaskArchivedStillShown(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "ghost", "G", "done", "low", filepath.Join(root, "x"), nil)
-	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "ghost"); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, store.NowISO(), "ghost"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -457,7 +457,7 @@ func TestCmdShowTaskConfigurableStaleness(t *testing.T) {
 }
 
 func TestShowTaskListsAuxFiles(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 
 	if rc := cmdAdd([]string{"task", "Foo task", "--slug", "foo", "--work-dir", wd}); rc != 0 {
@@ -490,7 +490,7 @@ func TestShowTaskListsAuxFiles(t *testing.T) {
 }
 
 func TestShowTaskNoAuxFiles(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"task", "Bar", "--slug", "bar", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -506,7 +506,7 @@ func TestShowTaskNoAuxFiles(t *testing.T) {
 }
 
 func TestShowProjectListsAuxFiles(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Auth", "--slug", "auth", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -528,7 +528,7 @@ func TestShowProjectListsAuxFiles(t *testing.T) {
 }
 
 func TestShowProjectNoAuxFiles(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "Bar", "--slug", "barproj", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -547,7 +547,7 @@ func TestShowProjectNoAuxFiles(t *testing.T) {
 }
 
 func TestCmdShowPlaybook(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -576,13 +576,13 @@ func TestCmdShowPlaybook(t *testing.T) {
 }
 
 func TestCmdShowPlaybookListsRecentRuns(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
 	}
-	db := openFlowDB(t)
-	now := flowdb.NowISO()
+	db := openTestDB(t)
+	now := store.NowISO()
 	for _, runSlug := range []string{"p--2026-04-30-10-30", "p--2026-04-30-11-00"} {
 		if _, err := db.Exec(
 			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)

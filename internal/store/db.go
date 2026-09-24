@@ -1,9 +1,10 @@
 // Package db implements the SQLite data layer for focusflow.
-package flowdb
+package store
 
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
     status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','done')),
     priority      TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
     work_dir      TEXT NOT NULL,
-    source        TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','flow-mirror')),
+    source        TEXT NOT NULL DEFAULT 'native',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     archived_at   TEXT
@@ -49,7 +50,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     playbook_slug         TEXT REFERENCES playbooks(slug),
     priority              TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
     work_dir              TEXT NOT NULL,
-    source                TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','flow-mirror')),
+    source                TEXT NOT NULL DEFAULT 'native',
     waiting_on            TEXT,
     due_date              TEXT,
     status_changed_at     TEXT,
@@ -79,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
 -- a specific task's own mailbox (to_task_slug set) or an assignee-level
 -- mailbox like "user" (to_assignee set, to_task_slug NULL). See
 -- internal/app/message.go and internal/app/inbox.go for the CLI surface;
--- flow skill §4.18 documents the equivalent behavior this mirrors.
+-- the focusflow skill §4.18 documents the behavior.
 CREATE TABLE IF NOT EXISTS bus_messages (
     id              TEXT PRIMARY KEY,
     from_assignee   TEXT NOT NULL,
@@ -97,6 +98,44 @@ CREATE TABLE IF NOT EXISTS bus_messages (
 
 CREATE INDEX IF NOT EXISTS idx_bus_messages_to_task     ON bus_messages(to_task_slug, mail, created_at);
 CREATE INDEX IF NOT EXISTS idx_bus_messages_to_assignee ON bus_messages(to_assignee, mail, created_at);
+
+CREATE TABLE IF NOT EXISTS bus_watches (
+    watcher     TEXT NOT NULL,
+    watched     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (watcher, watched)
+);
+
+CREATE TABLE IF NOT EXISTS bus_nudges (
+    task_slug  TEXT PRIMARY KEY,
+    nudged_at  TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS bus_surfaced (
+    task_slug   TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    PRIMARY KEY (task_slug, message_id)
+);
+
+-- Owners: autonomous recurring agents (charter + cadence + tick state).
+CREATE TABLE IF NOT EXISTS owners (
+    slug              TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    work_dir          TEXT NOT NULL,
+    project_slug      TEXT REFERENCES projects(slug),
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','retired')),
+    every             TEXT NOT NULL,
+    next_wake_at      TEXT,
+    last_tick_at      TEXT,
+    last_tick_status  TEXT,
+    tick_pid          INTEGER,
+    tick_started      TEXT,
+    harness           TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    archived_at       TEXT
+);
 `
 
 // indexesPostMigrate are indexes that depend on columns added by
@@ -120,7 +159,7 @@ type Project struct {
 	Status     string
 	Priority   string
 	WorkDir    string
-	Source     string // 'native' | 'flow-mirror'
+	Source     string // always 'native' (legacy column)
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
@@ -136,7 +175,7 @@ type Task struct {
 	PlaybookSlug       sql.NullString // set when Kind='playbook_run'
 	Priority           string
 	WorkDir            string
-	Source             string // 'native' | 'flow-mirror'
+	Source             string // always 'native' (legacy column)
 	WaitingOn          sql.NullString
 	DueDate            sql.NullString
 	StatusChangedAt    sql.NullString
@@ -199,26 +238,108 @@ func NullIfEmpty(s string) any {
 	return s
 }
 
-// OpenDB opens (or creates) the SQLite database at path, ensures the
-// schema is present, and runs idempotent migrations.
+// dsnFor builds the connection string every focusflow process uses. The
+// pragmas ride in the DSN — not a one-off db.Exec — so EVERY connection in
+// database/sql's pool inherits them (a plain `PRAGMA foreign_keys = ON`
+// only affects the single connection that ran it):
+//   - journal_mode(WAL): readers (control-center, other commands, hooks)
+//     never block on a writer and vice versa.
+//   - busy_timeout(30000): contention waits instead of failing SQLITE_BUSY.
+//   - foreign_keys(1): enforced on all connections.
+//   - _txlock=immediate: write transactions take the write lock at BEGIN,
+//     so two concurrent read-then-write transactions serialize cleanly
+//     rather than failing on lock upgrade.
+func dsnFor(path string) string {
+	q := url.Values{}
+	for _, p := range []string{"busy_timeout(30000)", "foreign_keys(1)", "journal_mode(WAL)", "synchronous(NORMAL)"} {
+		q.Add("_pragma", p)
+	}
+	q.Set("_txlock", "immediate")
+	u := url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}
+	return u.String()
+}
+
+// SchemaVersion is the schema generation this binary understands, stored
+// in SQLite's PRAGMA user_version. Version 1 is the baseline: schemaDDL
+// plus runMigrations' idempotent column/table upgrades, which is what
+// every pre-versioning database (user_version 0) is brought to on first
+// open. From here on, a schema change MUST be a new entry in
+// versionedMigrations (never an edit to schemaDDL alone — an already-
+// stamped database would skip it) and bump SchemaVersion.
+const SchemaVersion = 1
+
+// versionedMigrations[i] upgrades a database from version i+1 to i+2
+// (the baseline, version 1, is applied by applyBaseline). Each runs in
+// its own transaction together with its user_version bump, so a crash
+// can't leave a half-applied step marked done.
+var versionedMigrations = []func(tx *sql.Tx) error{}
+
+// ErrSchemaTooNew is returned when the database was written by a newer
+// focusflow than this binary; opening it read-write could corrupt data.
+type ErrSchemaTooNew struct{ Have, Max int }
+
+func (e ErrSchemaTooNew) Error() string {
+	return fmt.Sprintf("database schema v%d is newer than this focusflow understands (v%d) — upgrade the binary (`make install`)", e.Have, e.Max)
+}
+
+// OpenDB opens (or creates) the SQLite database at path and brings its
+// schema up to SchemaVersion. It is the ONE way every command, hook and
+// test opens focusflow.db. When the database is already current the
+// only cost is one PRAGMA read — no DDL, no write lock.
 func OpenDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dsnFor(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if err := ensureSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("enable foreign_keys: %w", err)
-	}
-	if _, err := db.Exec(schemaDDL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
-	if err := runMigrations(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
+		return nil, err
 	}
 	return db, nil
+}
+
+func ensureSchema(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if v > SchemaVersion {
+		return ErrSchemaTooNew{Have: v, Max: SchemaVersion}
+	}
+	if v == SchemaVersion {
+		return nil
+	}
+	if v < 1 {
+		if _, err := db.Exec(schemaDDL); err != nil {
+			return fmt.Errorf("apply schema: %w", err)
+		}
+		if err := runMigrations(db); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+			return fmt.Errorf("stamp schema version: %w", err)
+		}
+		v = 1
+	}
+	for ; v < SchemaVersion; v++ {
+		step := versionedMigrations[v-1]
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration to v%d: %w", v+1, err)
+		}
+		if err := step(tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate to v%d: %w", v+1, err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", v+1)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("stamp v%d: %w", v+1, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit v%d: %w", v+1, err)
+		}
+	}
+	return nil
 }
 
 func runMigrations(db *sql.DB) error {
@@ -276,11 +397,9 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	// source marks rows mirrored in read-only from real flow (vs
-	// user-created directly in focusflow). SQLite doesn't allow a CHECK
-	// constraint on ADD COLUMN (see the kind comment above); application
-	// code (UpsertMirroredProject / UpsertMirroredTask) is the only writer
-	// of 'flow-mirror' and validates it.
+	// source is a legacy column: every row is 'native'. It is kept (rather
+	// than dropped) because SQLite cannot drop a column that a CHECK
+	// constraint references on existing databases.
 	has, err = columnExists(db, "projects", "source")
 	if err != nil {
 		return err
@@ -716,100 +835,4 @@ func ListAllTags(db *sql.DB) ([]TagCount, error) {
 		out = append(out, tc)
 	}
 	return out, rows.Err()
-}
-
-// ---------- flow-mirror queries ----------
-//
-// One-way, read-only-sourced upserts for rows mirrored in from real
-// flow's flow.db (see internal/realflow). Both are guarded by
-// `WHERE <table>.source = 'flow-mirror'` on the DO UPDATE clause: if a
-// row with the same slug already exists and its source is 'native' (i.e.
-// created directly in focusflow, not by a prior mirror run), the WHERE
-// evaluates false, SQLite silently skips the update, and the native row
-// is left completely untouched — no error, no partial write. The
-// returned bool tells the caller whether the mirror was actually applied
-// (true) or skipped due to a native collision (false), so callers can
-// decide whether to also touch on-disk brief/updates files.
-
-// UpsertMirroredProject inserts a project mirrored from real flow, or
-// refreshes name/status/priority/work_dir if a mirror-owned row with this
-// slug already exists.
-func UpsertMirroredProject(db *sql.DB, slug, name, status, priority, workDir string) (applied bool, err error) {
-	now := NowISO()
-	res, err := db.Exec(`
-		INSERT INTO projects (slug, name, status, priority, work_dir, source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'flow-mirror', ?, ?)
-		ON CONFLICT(slug) DO UPDATE SET
-			name       = excluded.name,
-			status     = excluded.status,
-			priority   = excluded.priority,
-			work_dir   = excluded.work_dir,
-			updated_at = excluded.updated_at
-		WHERE projects.source = 'flow-mirror'
-	`, slug, name, status, priority, workDir, now, now)
-	if err != nil {
-		return false, fmt.Errorf("upsert mirrored project %s: %w", slug, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("rows affected: %w", err)
-	}
-	return n > 0, nil
-}
-
-// SetMirroredProjectArchivedAt stamps archived_at on a mirror-owned
-// project row. Used by the one-time flow->focusflow migration command to
-// carry over archived state, which UpsertMirroredProject doesn't touch.
-// Guarded the same way as UpsertMirroredProject: a native row with the
-// same slug is silently left alone.
-func SetMirroredProjectArchivedAt(db *sql.DB, slug, archivedAt string) error {
-	_, err := db.Exec(
-		`UPDATE projects SET archived_at = ? WHERE slug = ? AND source = 'flow-mirror'`,
-		archivedAt, slug,
-	)
-	if err != nil {
-		return fmt.Errorf("set mirrored project archived_at %s: %w", slug, err)
-	}
-	return nil
-}
-
-// SetMirroredTaskArchivedAt is the task-table equivalent of
-// SetMirroredProjectArchivedAt.
-func SetMirroredTaskArchivedAt(db *sql.DB, slug, archivedAt string) error {
-	_, err := db.Exec(
-		`UPDATE tasks SET archived_at = ? WHERE slug = ? AND source = 'flow-mirror'`,
-		archivedAt, slug,
-	)
-	if err != nil {
-		return fmt.Errorf("set mirrored task archived_at %s: %w", slug, err)
-	}
-	return nil
-}
-
-// UpsertMirroredTask is the task-table equivalent of
-// UpsertMirroredProject. projectSlug may be empty for a floating task.
-// session_id and its siblings are deliberately never written here — a
-// mirrored task's session lifecycle belongs to real flow, not focusflow.
-func UpsertMirroredTask(db *sql.DB, slug, name, projectSlug, status, priority, workDir string) (applied bool, err error) {
-	now := NowISO()
-	res, err := db.Exec(`
-		INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, source, status_changed_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'flow-mirror', ?, ?, ?)
-		ON CONFLICT(slug) DO UPDATE SET
-			name         = excluded.name,
-			project_slug = excluded.project_slug,
-			status       = excluded.status,
-			priority     = excluded.priority,
-			work_dir     = excluded.work_dir,
-			updated_at   = excluded.updated_at
-		WHERE tasks.source = 'flow-mirror'
-	`, slug, name, NullIfEmpty(projectSlug), status, priority, workDir, now, now, now)
-	if err != nil {
-		return false, fmt.Errorf("upsert mirrored task %s: %w", slug, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("rows affected: %w", err)
-	}
-	return n > 0, nil
 }

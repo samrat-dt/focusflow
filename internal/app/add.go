@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"time"
@@ -26,7 +26,7 @@ Open questions.
 // cmdAdd dispatches `focusflow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', or 'playbook'")
+		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', 'playbook', or 'owner'")
 		return 2
 	}
 	switch args[0] {
@@ -36,6 +36,8 @@ func cmdAdd(args []string) int {
 		return addTask(args[1:])
 	case "playbook":
 		return addPlaybook(args[1:])
+	case "owner":
+		return addOwner(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown add subcommand %q\n", args[0])
 	return 2
@@ -70,12 +72,12 @@ func addProject(args []string) int {
 		return 1
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -98,7 +100,7 @@ func addProject(args []string) int {
 		}
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO projects (slug, name, status, priority, work_dir, created_at, updated_at)
 		 VALUES (?, ?, 'active', ?, ?, ?, ?)`,
@@ -108,25 +110,25 @@ func addProject(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	projDir := filepath.Join(root, "projects", slug)
-	if err := os.MkdirAll(filepath.Join(projDir, "updates"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projDir, "updates"), privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	briefPath := filepath.Join(projDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(projectBriefStub, name)), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(projectBriefStub, name)), privFile); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 
-	if err := flowdb.UpsertWorkdir(db, abs, "", "", ""); err != nil {
+	if err := store.UpsertWorkdir(db, abs, "", "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -161,12 +163,12 @@ func addTask(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -193,7 +195,7 @@ func addTask(args []string) int {
 	var projectSlug any = nil
 	var projectWorkDir string
 	if *project != "" {
-		p, err := flowdb.GetProject(db, *project)
+		p, err := store.GetProject(db, *project)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				fmt.Fprintf(os.Stderr, "error: project %q not found\n", *project)
@@ -210,7 +212,7 @@ func addTask(args []string) int {
 	//   - --work-dir given       → use it (must exist or --mkdir)
 	//   - --project given, no wd → inherit from project
 	//   - both omitted           → auto-create ~/.focusflow/tasks/<slug>/workspace/
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -228,8 +230,9 @@ func addTask(args []string) int {
 	case projectWorkDir != "":
 		absWorkDir = projectWorkDir
 	default:
+		// Floating workspace lives inside the private focusflow root.
 		absWorkDir = filepath.Join(taskDir, "workspace")
-		if err := os.MkdirAll(absWorkDir, 0o755); err != nil {
+		if err := os.MkdirAll(absWorkDir, privDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: create workspace %s: %v\n", absWorkDir, err)
 			return 1
 		}
@@ -246,7 +249,7 @@ func addTask(args []string) int {
 		dueDate = d.Format("2006-01-02")
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, status_changed_at, created_at, updated_at)
 		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?)`,
@@ -263,25 +266,25 @@ func addTask(args []string) int {
 		}
 	}
 	for _, tag := range tags {
-		if err := flowdb.AddTag(db, slug, tag); err != nil {
+		if err := store.AddTag(db, slug, tag); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Join(taskDir, "updates"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(taskDir, "updates"), privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	briefPath := filepath.Join(taskDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(taskBriefStub, name)), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(taskBriefStub, name)), privFile); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 
-	if err := flowdb.UpsertWorkdir(db, absWorkDir, "", "", ""); err != nil {
+	if err := store.UpsertWorkdir(db, absWorkDir, "", "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"time"
 )
@@ -14,8 +14,7 @@ import (
 var inboxPollInterval = 500 * time.Millisecond
 
 // cmdInbox dispatches `focusflow inbox [list|pop|read|stats] ...`. A bare
-// `focusflow inbox` (or one starting with a flag) defaults to list, same
-// as real flow.
+// `focusflow inbox` (or one starting with a flag) defaults to list.
 func cmdInbox(args []string) int {
 	if len(args) > 0 && !looksLikeFlag(args[0]) {
 		switch args[0] {
@@ -26,8 +25,7 @@ func cmdInbox(args []string) int {
 		case "list":
 			return cmdInboxList(args[1:])
 		case "stats":
-			fmt.Fprintln(os.Stderr, "error: inbox stats is out of scope for focusflow — see the focusflow-messaging task brief (owners/watches/stats parity deferred)")
-			return 2
+			return cmdInboxStats(args[1:])
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown inbox subcommand %q\n", args[0])
 			return 2
@@ -40,14 +38,14 @@ func cmdInbox(args []string) int {
 // (e.g. "user", the human's aggregate queue across all tasks), or — with
 // none given — the task bound to the current session, falling back to
 // the human's own mailbox for a dispatch/unbound session.
-func resolveMailbox(db *sql.DB, as string) flowdb.MailboxFilter {
+func resolveMailbox(db *sql.DB, as string) store.MailboxFilter {
 	if as != "" {
-		return flowdb.MailboxFilter{Assignee: as}
+		return store.MailboxFilter{Assignee: as}
 	}
 	if slug := resolveCurrentTaskSlug(db); slug != "" {
-		return flowdb.MailboxFilter{TaskSlug: slug}
+		return store.MailboxFilter{TaskSlug: slug}
 	}
-	return flowdb.MailboxFilter{Assignee: "user"}
+	return store.MailboxFilter{Assignee: "user"}
 }
 
 // cmdInboxList implements `focusflow inbox [--as <assignee>] [--all] [--json]`.
@@ -64,12 +62,12 @@ func cmdInboxList(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -77,7 +75,7 @@ func cmdInboxList(args []string) int {
 	defer db.Close()
 
 	mailbox := resolveMailbox(db, *as)
-	msgs, err := flowdb.ListBusMessages(db, mailbox, *all)
+	msgs, err := store.ListBusMessages(db, mailbox, *all)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -94,9 +92,9 @@ func cmdInboxList(args []string) int {
 // `focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]`.
 // It atomically consumes (or, with --keep-unread, peeks at) the oldest
 // unread message in the mailbox. With --wait it polls until a message
-// arrives or --timeout elapses; per the flow skill, timing out is silent
+// arrives or --timeout elapses; per the skill (§4.18), timing out is silent
 // with --json (nothing printed, exit 0) so a polling loop like
-// `while true; do flow inbox pop --wait --timeout 300 --json || true; done`
+// `while true; do focusflow inbox pop --wait --timeout 300 --json || true; done`
 // never emits a spurious event.
 func cmdInboxPop(args []string) int {
 	fs := flagSet("inbox pop")
@@ -113,7 +111,7 @@ func cmdInboxPop(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -128,12 +126,15 @@ func cmdInboxPop(args []string) int {
 	mailbox := resolveMailbox(db, *as)
 	deadline := time.Now().Add(time.Duration(*timeoutSec) * time.Second)
 	for {
-		m, err := flowdb.PopOldestUnread(db, mailbox, *keepUnread)
+		m, err := store.PopOldestUnread(db, mailbox, *keepUnread)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 		if m != nil {
+			if !*keepUnread && mailbox.TaskSlug != "" {
+				_ = store.ResetNudges(db, mailbox.TaskSlug)
+			}
 			printPoppedMessage(m, *jsonOut)
 			return 0
 		}
@@ -168,7 +169,7 @@ func cmdInboxRead(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -180,12 +181,12 @@ func cmdInboxRead(args []string) int {
 	}
 	defer db.Close()
 
-	m, err := flowdb.GetBusMessage(db, id)
+	m, err := store.GetBusMessage(db, id)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: no such message %q\n", id)
 		return 1
 	}
-	if _, err := flowdb.MarkRead(db, id); err != nil {
+	if _, err := store.MarkRead(db, id); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -213,7 +214,7 @@ type jsonMessage struct {
 // toJSONMessage shapes a BusMessage the way control-center's parseRow
 // expects: id, body, created_at, from.task_slug (nullable), reply_to
 // (nullable), urgent, mail.
-func toJSONMessage(m *flowdb.BusMessage) jsonMessage {
+func toJSONMessage(m *store.BusMessage) jsonMessage {
 	var from jsonMessageFrom
 	if m.FromTaskSlug.Valid && m.FromTaskSlug.String != "" {
 		s := m.FromTaskSlug.String
@@ -235,7 +236,7 @@ func toJSONMessage(m *flowdb.BusMessage) jsonMessage {
 	}
 }
 
-func printMessagesJSON(msgs []*flowdb.BusMessage) {
+func printMessagesJSON(msgs []*store.BusMessage) {
 	out := make([]jsonMessage, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, toJSONMessage(m))
@@ -251,7 +252,7 @@ func printMessagesJSON(msgs []*flowdb.BusMessage) {
 // printPoppedMessage prints exactly one line of JSON (so a caller reading
 // stdout line-by-line — e.g. a Monitor-style event loop — sees exactly
 // one event) or a short human-readable block.
-func printPoppedMessage(m *flowdb.BusMessage, jsonOut bool) {
+func printPoppedMessage(m *store.BusMessage, jsonOut bool) {
 	if jsonOut {
 		b, err := json.Marshal(toJSONMessage(m))
 		if err != nil {
@@ -272,7 +273,7 @@ func printPoppedMessage(m *flowdb.BusMessage, jsonOut bool) {
 	fmt.Printf("[%s] %s  from:%s%s\n%s\n", m.ID, m.CreatedAt, from, urgent, m.Body)
 }
 
-func printMessagesTable(msgs []*flowdb.BusMessage) {
+func printMessagesTable(msgs []*store.BusMessage) {
 	if len(msgs) == 0 {
 		fmt.Println("(no messages)")
 		return
@@ -292,4 +293,50 @@ func printMessagesTable(msgs []*flowdb.BusMessage) {
 		}
 		fmt.Printf("%s [%s] %s  from:%s%s\n    %s\n", marker, m.ID, m.CreatedAt, from, urgent, m.Body)
 	}
+}
+
+// cmdInboxStats implements `focusflow inbox stats` — the human queue's
+// answered/pending counts and wait-time metrics.
+func cmdInboxStats(args []string) int {
+	fs := flagSet("inbox stats")
+	as := fs.String("as", "user", "assignee-level mailbox to summarize")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	dbPath, err := dataDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := store.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	s, err := store.InboxStatsFor(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("answered messages : %d\n", s.Answered)
+	fmt.Printf("pending messages  : %d\n", s.Pending)
+	fmt.Printf("broadcasts on bus : %d\n", s.Broadcasts)
+	fmt.Printf("average wait      : %s\n", formatWait(s.Average))
+	fmt.Printf("median wait       : %s\n", formatWait(s.Median))
+	fmt.Printf("worst wait        : %s\n", formatWait(s.Worst))
+	return 0
+}
+
+func formatWait(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d/time.Second))
+	}
+	return d.String()
 }

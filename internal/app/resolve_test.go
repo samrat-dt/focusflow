@@ -3,14 +3,14 @@ package app
 import (
 	"testing"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 func TestResolvePlaybook(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "triage-cs", Name: "Triage", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "triage-cs", Name: "Triage", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -28,13 +28,13 @@ func TestResolvePlaybook(t *testing.T) {
 }
 
 func TestResolvePlaybookArchived(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "old", Name: "O", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "old", Name: "O", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE playbooks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "old"); err != nil {
+	if _, err := db.Exec(`UPDATE playbooks SET archived_at = ? WHERE slug = ?`, store.NowISO(), "old"); err != nil {
 		t.Fatal(err)
 	}
 

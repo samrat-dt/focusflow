@@ -1,8 +1,8 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
+	"focusflow/internal/store"
 	"os/exec"
 	"strings"
 	"sync"
@@ -49,7 +49,7 @@ func seedTask(t *testing.T, slug string) {
 // `claude --session-id <uuid> "<prompt>"` so the jsonl file claude creates
 // lands at the deterministic path keyed on that UUID.
 func TestDo_Here_BindsCurrentSessionWithoutSpawningTab(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "bindable")
 	spawnCount, _ := stubITerm(t)
 
@@ -62,8 +62,8 @@ func TestDo_Here_BindsCurrentSessionWithoutSpawningTab(t *testing.T) {
 		t.Errorf("do --here must not spawn an iTerm tab, got %d spawns", *spawnCount)
 	}
 
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "bindable")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "bindable")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestDo_Here_BindsCurrentSessionWithoutSpawningTab(t *testing.T) {
 }
 
 func TestDo_Here_RejectsAlreadyBoundTask(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "already-bound")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "55555555-5555-4555-8555-555555555555")
 	if rc := cmdDo([]string{"already-bound", "--here"}); rc != 0 {
@@ -91,7 +91,7 @@ func TestDo_Here_RejectsAlreadyBoundTask(t *testing.T) {
 }
 
 func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "auto-task")
 
 	origExecCommand := execCommand
@@ -122,8 +122,8 @@ func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
 		t.Error("--auto must imply --dangerously-skip-permissions")
 	}
 
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "auto-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "auto-task")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
 }
 
 func TestCmdDoRejectsLeadingDashAsRef(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdDo([]string{"--help"})
 	if rc != 2 {
 		t.Errorf("do --help: rc=%d, want 2 (usage error)", rc)
@@ -144,7 +144,7 @@ func TestCmdDoRejectsLeadingDashAsRef(t *testing.T) {
 }
 
 func TestDo_Auto_PromptTellsSessionToSelfComplete(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "auto-self-complete")
 
 	origExecCommand := execCommand
@@ -165,7 +165,7 @@ func TestDo_Auto_PromptTellsSessionToSelfComplete(t *testing.T) {
 }
 
 func TestDo_Auto_UsesPrintModeSoItRunsWithoutATTY(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "auto-fresh")
 
 	origExecCommand := execCommand
@@ -187,7 +187,7 @@ func TestDo_Auto_UsesPrintModeSoItRunsWithoutATTY(t *testing.T) {
 	// a prior `do` had already bootstrapped it), so this --auto call
 	// takes the resume branch, not the fresh-bootstrap branch.
 	seedTask(t, "auto-resume")
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	if _, err := db.Exec(`UPDATE tasks SET session_id = 'existing-session-id' WHERE slug = 'auto-resume'`); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func containsArg(args []string, want string) bool {
 }
 
 func TestDo_Auto_CannotCombineWithHere(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "both-flags")
 	rc := cmdDo([]string{"both-flags", "--auto", "--here"})
 	if rc != 2 {
@@ -223,10 +223,10 @@ func TestDo_Auto_CannotCombineWithHere(t *testing.T) {
 }
 
 func TestRefreshAutoRunStatus_DetectsDeadPID(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "will-die")
 
-	db := openFlowDB(t)
+	db := openTestDB(t)
 
 	// A pid that is guaranteed not to be running: spawn `true`, wait for
 	// it to exit, then use its now-dead pid.
@@ -237,7 +237,7 @@ func TestRefreshAutoRunStatus_DetectsDeadPID(t *testing.T) {
 	deadPID := cmd.Process.Pid
 	cmd.Wait()
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=? WHERE slug='will-die'`,
 		deadPID, now,
@@ -245,7 +245,7 @@ func TestRefreshAutoRunStatus_DetectsDeadPID(t *testing.T) {
 		t.Fatalf("seed running auto_run: %v", err)
 	}
 
-	task, err := flowdb.GetTask(db, "will-die")
+	task, err := store.GetTask(db, "will-die")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -253,14 +253,14 @@ func TestRefreshAutoRunStatus_DetectsDeadPID(t *testing.T) {
 		t.Fatalf("refreshAutoRunStatus: %v", err)
 	}
 
-	task, _ = flowdb.GetTask(db, "will-die")
+	task, _ = store.GetTask(db, "will-die")
 	if task.AutoRunStatus.String != "dead" {
 		t.Errorf("AutoRunStatus = %q, want dead (pid %d is no longer alive)", task.AutoRunStatus.String, deadPID)
 	}
 }
 
 func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "fresh-task")
 	_, getScript := stubITerm(t)
 
@@ -273,8 +273,8 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 		t.Fatalf("rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "fresh-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "fresh-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,11 +301,11 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 }
 
 func TestCmdDoResumesExistingSession(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "old-task")
 
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET session_id='existing-sid', session_started=? WHERE slug='old-task'`, flowdb.NowISO()); err != nil {
+	db := openTestDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET session_id='existing-sid', session_started=? WHERE slug='old-task'`, store.NowISO()); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -314,8 +314,8 @@ func TestCmdDoResumesExistingSession(t *testing.T) {
 	if rc := cmdDo([]string{"old-task"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db = openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "old-task")
+	db = openTestDB(t)
+	task, _ := store.GetTask(db, "old-task")
 	if task.SessionID.String != "existing-sid" {
 		t.Errorf("session_id got %q, want existing-sid", task.SessionID.String)
 	}
@@ -332,11 +332,11 @@ func TestCmdDoResumesExistingSession(t *testing.T) {
 // existing session_id with a newly-allocated UUID and spawns with that
 // UUID via --session-id (not --resume).
 func TestCmdDoFreshRotatesStaleSession(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "stale-task")
 
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET session_id='stale-uuid', session_started=? WHERE slug='stale-task'`, flowdb.NowISO()); err != nil {
+	db := openTestDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET session_id='stale-uuid', session_started=? WHERE slug='stale-task'`, store.NowISO()); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -350,8 +350,8 @@ func TestCmdDoFreshRotatesStaleSession(t *testing.T) {
 	if rc := cmdDo([]string{"stale-task", "--fresh"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db = openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "stale-task")
+	db = openTestDB(t)
+	task, _ := store.GetTask(db, "stale-task")
 	if task.SessionID.String != pinnedSID {
 		t.Errorf("session_id after --fresh: got %q, want %s", task.SessionID.String, pinnedSID)
 	}
@@ -365,11 +365,11 @@ func TestCmdDoFreshRotatesStaleSession(t *testing.T) {
 }
 
 func TestCmdDoDoneTaskRefused(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "closed-task")
 
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET status='done', updated_at=? WHERE slug='closed-task'`, flowdb.NowISO()); err != nil {
+	db := openTestDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='done', updated_at=? WHERE slug='closed-task'`, store.NowISO()); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -384,7 +384,7 @@ func TestCmdDoDoneTaskRefused(t *testing.T) {
 }
 
 func TestCmdDoFuzzyAmbiguous(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "auth fix")
 	seedTask(t, "auth refactor")
 
@@ -398,7 +398,7 @@ func TestCmdDoFuzzyAmbiguous(t *testing.T) {
 }
 
 func TestCmdDoFuzzyExactWins(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "auth")
 	seedTask(t, "auth fix")
 
@@ -406,8 +406,8 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 	if rc := cmdDo([]string{"auth"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "auth")
+	db := openTestDB(t)
+	task, _ := store.GetTask(db, "auth")
 	if task.Status != "in-progress" {
 		t.Errorf("status=%q, want in-progress", task.Status)
 	}
@@ -418,7 +418,7 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 // bootstrap and the resume paths. Skill freshness is now an explicit
 // `focusflow skill update` step, not an implicit per-launch refresh.
 func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "wrap-fresh")
 
 	_, getScript := stubITerm(t)
@@ -435,8 +435,8 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	}
 
 	// Now the resume path.
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET session_id='resume-sid', session_started=? WHERE slug='wrap-fresh'`, flowdb.NowISO()); err != nil {
+	db := openTestDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET session_id='resume-sid', session_started=? WHERE slug='wrap-fresh'`, store.NowISO()); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -459,7 +459,7 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 // `claude --resume <winner-uuid>`). Both tabs end up pointing at the same
 // session — pre-existing documented race outcome, no lost UUIDs.
 func TestCmdDoConcurrentFreshTasks(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "race-task")
 	spawns, _ := stubITerm(t)
 
@@ -475,8 +475,8 @@ func TestCmdDoConcurrentFreshTasks(t *testing.T) {
 			t.Errorf("goroutine %d rc=%d", i, rc)
 		}
 	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "race-task")
+	db := openTestDB(t)
+	task, _ := store.GetTask(db, "race-task")
 	if !task.SessionID.Valid || task.SessionID.String == "" {
 		t.Errorf("session_id should be populated after races (got %+v)", task.SessionID)
 	}
@@ -557,7 +557,7 @@ func TestBuildPlaybookRunBootstrapPromptNotFirstRun(t *testing.T) {
 }
 
 func TestCmdDoSetsFirstRunBannerForFirstPlaybookRun(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri-fr", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -573,7 +573,7 @@ func TestCmdDoSetsFirstRunBannerForFirstPlaybookRun(t *testing.T) {
 }
 
 func TestCmdDoOmitsFirstRunBannerForSecondPlaybookRun(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Triage 2", "--slug", "tri-2", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -596,7 +596,7 @@ func TestCmdDoOmitsFirstRunBannerForSecondPlaybookRun(t *testing.T) {
 }
 
 func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -615,5 +615,64 @@ func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 	}
 	if !strings.Contains(script, "focusflow show playbook tri") {
 		t.Errorf("expected 'focusflow show playbook tri' in spawn script, got:\n%s", script)
+	}
+}
+
+// A task whose session is already being served refuses a second `do`
+// unless --force is passed.
+func TestDoRefusesLiveSessionWithoutForce(t *testing.T) {
+	setupRoot(t)
+	seedTask(t, "livetask")
+	stubITerm(t)
+	if rc := cmdDo([]string{"livetask"}); rc != 0 {
+		t.Fatalf("first do rc=%d", rc)
+	}
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "livetask")
+	if err != nil || !task.SessionID.Valid {
+		t.Fatalf("expected a bound session, got %+v (%v)", task, err)
+	}
+	old := psLines
+	t.Cleanup(func() { psLines = old })
+	psLines = func() ([]string, error) {
+		return []string{"claude --resume " + task.SessionID.String}, nil
+	}
+
+	if rc := cmdDo([]string{"livetask"}); rc == 0 {
+		t.Error("expected refusal for a live session")
+	}
+	if rc := cmdDo([]string{"livetask", "--force"}); rc != 0 {
+		t.Errorf("--force rc=%d, want 0", rc)
+	}
+}
+
+func TestDoCodexHarnessOnlyWithHere(t *testing.T) {
+	setupRoot(t)
+	seedTask(t, "cx")
+	spawns, _ := stubITerm(t)
+
+	if rc := cmdDo([]string{"cx", "--harness", "codex"}); rc != 2 {
+		t.Errorf("--harness codex without --here rc=%d, want 2", rc)
+	}
+	if *spawns != 0 {
+		t.Error("nothing may be spawned for an unsupported harness")
+	}
+
+	t.Setenv("CODEX_THREAD_ID", "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := cmdDo([]string{"cx", "--here"}); rc != 0 {
+		t.Fatalf("bind codex session rc=%d", rc)
+	}
+	task, _ := store.GetTask(openTestDB(t), "cx")
+	if task.Harness.String != "codex" {
+		t.Fatalf("harness = %q", task.Harness.String)
+	}
+	// Resuming a codex-bound task from focusflow would run claude on a
+	// codex session id — refuse.
+	if rc := cmdDo([]string{"cx"}); rc == 0 {
+		t.Error("spawning a codex-bound task must fail")
+	}
+	if *spawns != 0 {
+		t.Error("no spawn for a codex-bound task")
 	}
 }

@@ -2,16 +2,16 @@ package app
 
 import (
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 )
 
-// flowRoot returns the root directory for focusflow state. Honors $FOCUSFLOW_ROOT if
+// dataRoot returns the root directory for focusflow state. Honors $FOCUSFLOW_ROOT if
 // set, otherwise falls back to ~/.focusflow. The returned path is not guaranteed
 // to exist — callers that need it created should run `focusflow init` or create
 // it themselves.
-func flowRoot() (string, error) {
+func dataRoot() (string, error) {
 	if r := os.Getenv("FOCUSFLOW_ROOT"); r != "" {
 		return r, nil
 	}
@@ -22,10 +22,10 @@ func flowRoot() (string, error) {
 	return filepath.Join(home, ".focusflow"), nil
 }
 
-// flowDBPath returns the absolute path to focusflow.db under the focusflow root.
+// dataDBPath returns the absolute path to focusflow.db under the focusflow root.
 // Returns a clear error if the data directory hasn't been initialized.
-func flowDBPath() (string, error) {
-	root, err := flowRoot()
+func dataDBPath() (string, error) {
+	root, err := dataRoot()
 	if err != nil {
 		return "", err
 	}
@@ -48,7 +48,7 @@ func cmdInit(args []string) int {
 		return 2
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -65,7 +65,7 @@ func cmdInit(args []string) int {
 		filepath.Join(root, "tasks"),
 		filepath.Join(root, "kb"),
 	} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, privDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: mkdir %s: %v\n", d, err)
 			return 1
 		}
@@ -76,7 +76,7 @@ func cmdInit(args []string) int {
 	for _, kb := range kbSeeds() {
 		path := filepath.Join(root, "kb", kb.filename)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			if err := os.WriteFile(path, []byte(kb.stub), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(kb.stub), privFile); err != nil {
 				fmt.Fprintf(os.Stderr, "error: write %s: %v\n", path, err)
 				return 1
 			}
@@ -85,12 +85,15 @@ func cmdInit(args []string) int {
 
 	// Open (and implicitly initialize) focusflow.db.
 	dbPath := filepath.Join(root, "focusflow.db")
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
 	}
 	db.Close()
+	if _, err := hardenRoot(root); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not make %s private: %v\n", root, err)
+	}
 
 	// Install the skill idempotently. Skip if already present; we never
 	// overwrite on init (use `focusflow skill update` for that).
@@ -122,7 +125,7 @@ func cmdInit(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 	} else if added {
 		settings, _ := userSettingsPath()
-		fmt.Printf("installed SessionStart hook in %s\n", settings)
+		fmt.Printf("installed focusflow hooks in %s\n", settings)
 	}
 
 	fmt.Printf("focusflow initialized at %s\n", root)

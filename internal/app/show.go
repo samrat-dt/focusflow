@@ -3,7 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +21,8 @@ func cmdShow(args []string) int {
 	switch args[0] {
 	case "task":
 		return showTaskCmd(args[1:])
+	case "owner":
+		return ownerShow(args[1:])
 	case "project":
 		return showProjectCmd(args[1:])
 	case "playbook":
@@ -48,12 +50,12 @@ func showTaskCmd(args []string) int {
 		return 1
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -66,7 +68,7 @@ func showTaskCmd(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -93,12 +95,12 @@ func showProjectCmd(args []string) int {
 		return 1
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -111,7 +113,7 @@ func showProjectCmd(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -135,12 +137,12 @@ func showPlaybookCmd(args []string) int {
 		return 1
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -153,7 +155,7 @@ func showPlaybookCmd(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -166,19 +168,19 @@ func showPlaybookCmd(args []string) int {
 
 // resolveTaskRef resolves a ref to a task. Includes archived rows so
 // `show task` can display them.
-func resolveTaskRef(db *sql.DB, query string) (*flowdb.Task, error) {
+func resolveTaskRef(db *sql.DB, query string) (*store.Task, error) {
 	return ResolveTask(db, query, true)
 }
 
 // resolveProjectRef resolves a ref to a project. Includes archived rows.
-func resolveProjectRef(db *sql.DB, query string) (*flowdb.Project, error) {
+func resolveProjectRef(db *sql.DB, query string) (*store.Project, error) {
 	return ResolveProject(db, query, true)
 }
 
 // ---------- pretty printers ----------
 
 // printTaskMetadata writes the human-readable view of a task row.
-func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
+func printTaskMetadata(db *sql.DB, t *store.Task, root string) {
 	archivedMarker := ""
 	if t.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
@@ -191,9 +193,6 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	}
 	fmt.Printf("project:       %s\n", projName)
 	fmt.Printf("status:        %s\n", t.Status)
-	if t.Source == "flow-mirror" {
-		fmt.Printf("mirror:        yes — read-only reflection of the real flow task of the same slug\n")
-	}
 
 	// Staleness marker for in-progress tasks.
 	if t.Status == "in-progress" && !t.ArchivedAt.Valid {
@@ -222,7 +221,7 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 
 	// Work dir + optional workdir registry annotation.
 	wdLine := t.WorkDir
-	if wd, err := flowdb.GetWorkdir(db, t.WorkDir); err == nil {
+	if wd, err := store.GetWorkdir(db, t.WorkDir); err == nil {
 		var parts []string
 		if wd.Name.Valid && wd.Name.String != "" {
 			parts = append(parts, "known: "+wd.Name.String)
@@ -238,6 +237,16 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 
 	if t.WaitingOn.Valid && t.WaitingOn.String != "" {
 		fmt.Printf("waiting_on:    %s\n", t.WaitingOn.String)
+	}
+	if t.Assignee.Valid && t.Assignee.String != "" {
+		fmt.Printf("assignee:      %s\n", t.Assignee.String)
+	}
+	if tags, err := store.ListTagsForTask(db, t.Slug); err == nil && len(tags) > 0 {
+		hashed := make([]string, len(tags))
+		for i, tag := range tags {
+			hashed[i] = "#" + tag
+		}
+		fmt.Printf("tags:          %s\n", strings.Join(hashed, " "))
 	}
 
 	sid := "(not bootstrapped)"
@@ -255,6 +264,16 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		slast = t.SessionLastResumed.String
 	}
 	fmt.Printf("session_last_resumed:  %s\n", slast)
+	if t.AutoRunStatus.Valid && t.AutoRunStatus.String != "" {
+		when := t.AutoRunStarted.String
+		if t.AutoRunFinished.Valid && t.AutoRunFinished.String != "" {
+			when = t.AutoRunFinished.String
+		}
+		fmt.Printf("auto_run:              %s (%s)\n", t.AutoRunStatus.String, when)
+		if t.AutoRunLog.Valid && t.AutoRunLog.String != "" {
+			fmt.Printf("auto_run_log:          %s\n", t.AutoRunLog.String)
+		}
+	}
 
 	fmt.Printf("created:       %s\n", t.CreatedAt)
 	fmt.Printf("updated:       %s\n", t.UpdatedAt)
@@ -308,7 +327,7 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 }
 
 // printProjectMetadata writes the human-readable view of a project row.
-func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
+func printProjectMetadata(db *sql.DB, p *store.Project, root string) {
 	archivedMarker := ""
 	if p.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
@@ -316,13 +335,10 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 	fmt.Printf("slug:        %s%s\n", p.Slug, archivedMarker)
 	fmt.Printf("name:        %s\n", p.Name)
 	fmt.Printf("status:      %s\n", p.Status)
-	if p.Source == "flow-mirror" {
-		fmt.Printf("mirror:      yes — read-only reflection of the real flow project of the same slug\n")
-	}
 	fmt.Printf("priority:    %s\n", p.Priority)
 
 	wdLine := p.WorkDir
-	if wd, err := flowdb.GetWorkdir(db, p.WorkDir); err == nil {
+	if wd, err := store.GetWorkdir(db, p.WorkDir); err == nil {
 		var parts []string
 		if wd.Name.Valid && wd.Name.String != "" {
 			parts = append(parts, "known: "+wd.Name.String)
@@ -381,7 +397,7 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 
 	// Task breakdown.
 	slug := p.Slug
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Project: slug, IncludeArchived: false})
+	tasks, err := store.ListTasks(db, store.TaskFilter{Project: slug, IncludeArchived: false})
 	if err != nil {
 		fmt.Printf("tasks:       (error: %v)\n", err)
 		return
@@ -402,7 +418,7 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 }
 
 // printPlaybookMetadata writes the human-readable view of a playbook row.
-func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
+func printPlaybookMetadata(db *sql.DB, pb *store.Playbook, root string) {
 	archivedMarker := ""
 	if pb.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
@@ -416,7 +432,7 @@ func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
 	}
 
 	wdLine := pb.WorkDir
-	if wd, err := flowdb.GetWorkdir(db, pb.WorkDir); err == nil {
+	if wd, err := store.GetWorkdir(db, pb.WorkDir); err == nil {
 		var parts []string
 		if wd.Name.Valid && wd.Name.String != "" {
 			parts = append(parts, "known: "+wd.Name.String)
@@ -451,7 +467,7 @@ func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
 	}
 
 	// Recent runs (last 5).
-	runs, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+	runs, err := store.ListTasks(db, store.TaskFilter{
 		Kind:         "playbook_run",
 		PlaybookSlug: pb.Slug,
 	})
@@ -534,7 +550,7 @@ func staleDaysThreshold() int {
 // taskStaleness returns (daysSinceLastTouch, stale) for an in-progress
 // task. "Last touch" is max(updated_at, newest update file mtime).
 // Staleness threshold is configurable via FOCUSFLOW_STALE_DAYS (default 3).
-func taskStaleness(t *flowdb.Task, root string) (int, bool) {
+func taskStaleness(t *store.Task, root string) (int, bool) {
 	last, err := time.Parse(time.RFC3339, t.UpdatedAt)
 	if err != nil {
 		return 0, false
@@ -563,7 +579,7 @@ func taskStaleness(t *flowdb.Task, root string) (int, bool) {
 // daysInStatus returns the number of days the task has been in its
 // current status. Uses status_changed_at if set, else falls back to
 // created_at.
-func daysInStatus(t *flowdb.Task, now time.Time) int {
+func daysInStatus(t *store.Task, now time.Time) int {
 	ref := t.CreatedAt
 	if t.StatusChangedAt.Valid && t.StatusChangedAt.String != "" {
 		ref = t.StatusChangedAt.String
@@ -577,7 +593,7 @@ func daysInStatus(t *flowdb.Task, now time.Time) int {
 
 // daysUntilDue returns the number of days until the due date. Negative
 // means overdue. Returns (0, false) if no due date is set.
-func daysUntilDue(t *flowdb.Task, now time.Time) (int, bool) {
+func daysUntilDue(t *store.Task, now time.Time) (int, bool) {
 	if !t.DueDate.Valid || t.DueDate.String == "" {
 		return 0, false
 	}
@@ -620,7 +636,7 @@ func formatDueDateInfo(dateStr string, now time.Time) string {
 
 // temporalSummary builds the "in-progress for 5 days, due in 2 days"
 // line for `focusflow show task`.
-func temporalSummary(t *flowdb.Task, now time.Time) string {
+func temporalSummary(t *store.Task, now time.Time) string {
 	var parts []string
 
 	age := daysInStatus(t, now)

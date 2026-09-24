@@ -184,7 +184,7 @@ func skillInstall(args []string, forceDefault bool) int {
 		return 0
 	} else if added {
 		settings, _ := userSettingsPath()
-		fmt.Printf("installed SessionStart hook in %s (fires on startup + resume)\n", settings)
+		fmt.Printf("installed focusflow hooks in %s (fires on startup + resume)\n", settings)
 	} else {
 		fmt.Println("SessionStart hook already installed — leaving as is")
 	}
@@ -222,174 +222,214 @@ func skillUninstall(args []string) int {
 		return 0
 	} else if removed {
 		settings, _ := userSettingsPath()
-		fmt.Printf("removed SessionStart hook from %s\n", settings)
+		fmt.Printf("removed focusflow hooks from %s\n", settings)
 	}
 	return 0
 }
 
-// installSessionStartHook idempotently adds the focusflow SessionStart hook
-// to ~/.claude/settings.json. Returns (added, err) where added is true
-// if the settings file was actually modified (false if the hook was
-// already present).
-//
-// The merge preserves all existing top-level keys, all existing hooks
-// under other events (PreToolUse, etc.), and all existing SessionStart
-// entries. It only appends a new entry if no existing SessionStart
-// entry references `focusflow hook session-start`.
-func installSessionStartHook() (bool, error) {
-	path, err := userSettingsPath()
+// hookSpec is one Claude Code hook focusflow owns in settings.json.
+type hookSpec struct {
+	Event   string // SessionStart | UserPromptSubmit | Stop
+	Matcher string // "" = no matcher key
+	Command string // exact command string; the idempotency key
+}
+
+// managedHooks is the full set install/uninstall/doctor manage. The
+// commands are matched EXACTLY — never change them (that would orphan
+// existing installations). Before this list existed only SessionStart was
+// installed; the per-turn anchor and the Stop-hook bus nudge had to be
+// wired by hand and were left behind by `skill uninstall`.
+var managedHooks = []hookSpec{
+	{Event: "SessionStart", Matcher: hookMatcher, Command: hookCommand},
+	{Event: "UserPromptSubmit", Command: "focusflow hook user-prompt-submit"},
+	{Event: "Stop", Command: "focusflow hook stop"},
+}
+
+// readSettings loads ~/.claude/settings.json (missing file = empty).
+func readSettings() (path string, settings map[string]any, existed bool, err error) {
+	path, err = userSettingsPath()
 	if err != nil {
-		return false, err
+		return "", nil, false, err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false, fmt.Errorf("read %s: %w", path, err)
+	raw, rerr := os.ReadFile(path)
+	if rerr != nil {
+		if !os.IsNotExist(rerr) {
+			return path, nil, false, fmt.Errorf("read %s: %w", path, rerr)
 		}
-		raw = []byte("{}")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-		}
+		return path, map[string]any{}, false, nil
 	}
-	var settings map[string]any
 	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
+		return path, nil, true, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if settings == nil {
 		settings = map[string]any{}
 	}
+	return path, settings, true, nil
+}
 
+// writeSettings writes settings atomically (temp file + rename) and
+// preserves the existing file mode, so a crash can never leave a
+// truncated settings.json that breaks every Claude session.
+func writeSettings(path string, settings map[string]any) error {
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	out = append(out, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".settings-*.json")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// hookEntryHasCommand reports whether a settings hook entry runs cmd.
+func hookEntryHasCommand(entry any, cmd string) bool {
+	m, ok := entry.(map[string]any)
+	if !ok {
+		return false
+	}
+	inner, _ := m["hooks"].([]any)
+	for _, h := range inner {
+		if hm, ok := h.(map[string]any); ok {
+			if c, _ := hm["command"].(string); strings.TrimSpace(c) == cmd {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hookInstalled reports whether spec is wired in settings.
+func hookInstalled(settings map[string]any, spec hookSpec) bool {
+	hooks, _ := settings["hooks"].(map[string]any)
+	list, _ := hooks[spec.Event].([]any)
+	for _, e := range list {
+		if hookEntryHasCommand(e, spec.Command) {
+			return true
+		}
+	}
+	return false
+}
+
+// installSessionStartHook idempotently wires every managed focusflow hook
+// (SessionStart, UserPromptSubmit, Stop) into ~/.claude/settings.json and
+// reports whether the file changed. The name is historical. Existing
+// keys, other events and other entries are preserved.
+func installSessionStartHook() (bool, error) {
+	path, settings, _, err := readSettings()
+	if err != nil {
+		return false, err
+	}
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	sessionStart, _ := hooks["SessionStart"].([]any)
-
-	// Walk existing SessionStart entries; if any inner hook's command
-	// equals our marker, it's already installed.
-	for _, entry := range sessionStart {
-		m, ok := entry.(map[string]any)
-		if !ok {
+	changed := false
+	for _, spec := range managedHooks {
+		if hookInstalled(settings, spec) {
 			continue
 		}
-		inner, _ := m["hooks"].([]any)
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := hm["command"].(string); cmd == hookCommand {
-				return false, nil
-			}
+		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": spec.Command}}}
+		if spec.Matcher != "" {
+			entry["matcher"] = spec.Matcher
 		}
+		list, _ := hooks[spec.Event].([]any)
+		hooks[spec.Event] = append(list, entry)
+		changed = true
 	}
-
-	// Not present — append our entry.
-	newEntry := map[string]any{
-		"matcher": hookMatcher,
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": hookCommand,
-			},
-		},
+	if !changed {
+		return false, nil
 	}
-	sessionStart = append(sessionStart, newEntry)
-	hooks["SessionStart"] = sessionStart
 	settings["hooks"] = hooks
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+	if err := writeSettings(path, settings); err != nil {
+		return false, err
 	}
 	return true, nil
 }
 
-// uninstallSessionStartHook removes any SessionStart entry whose inner
-// hooks reference the focusflow hook command. Returns (removed, err) where
-// removed is true if the settings file was actually modified.
+// uninstallSessionStartHook removes every managed focusflow hook, dropping
+// an entry only when it held nothing else, and reports whether the file
+// changed.
 func uninstallSessionStartHook() (bool, error) {
-	path, err := userSettingsPath()
+	path, settings, existed, err := readSettings()
 	if err != nil {
 		return false, err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
-	}
 	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
+	if !existed || hooks == nil {
 		return false, nil
 	}
-	sessionStart, _ := hooks["SessionStart"].([]any)
-	if len(sessionStart) == 0 {
-		return false, nil
-	}
-
 	changed := false
-	kept := make([]any, 0, len(sessionStart))
-	for _, entry := range sessionStart {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			kept = append(kept, entry)
+	for _, spec := range managedHooks {
+		list, _ := hooks[spec.Event].([]any)
+		if len(list) == 0 {
 			continue
 		}
-		inner, _ := m["hooks"].([]any)
-		filteredInner := make([]any, 0, len(inner))
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				filteredInner = append(filteredInner, h)
+		kept := make([]any, 0, len(list))
+		for _, entry := range list {
+			m, ok := entry.(map[string]any)
+			if !ok || !hookEntryHasCommand(entry, spec.Command) {
+				kept = append(kept, entry)
 				continue
 			}
-			cmd, _ := hm["command"].(string)
-			if strings.TrimSpace(cmd) == hookCommand {
-				changed = true
-				continue
+			inner, _ := m["hooks"].([]any)
+			filtered := make([]any, 0, len(inner))
+			for _, h := range inner {
+				if hm, ok := h.(map[string]any); ok {
+					if c, _ := hm["command"].(string); strings.TrimSpace(c) == spec.Command {
+						changed = true
+						continue
+					}
+				}
+				filtered = append(filtered, h)
 			}
-			filteredInner = append(filteredInner, h)
+			if len(filtered) > 0 {
+				m["hooks"] = filtered
+				kept = append(kept, m)
+			}
 		}
-		if len(filteredInner) == 0 {
-			// Entry had only our hook → drop the entry entirely.
-			changed = true
-			continue
+		if len(kept) == 0 {
+			delete(hooks, spec.Event)
+		} else {
+			hooks[spec.Event] = kept
 		}
-		m["hooks"] = filteredInner
-		kept = append(kept, m)
 	}
-
 	if !changed {
 		return false, nil
-	}
-	if len(kept) == 0 {
-		delete(hooks, "SessionStart")
-	} else {
-		hooks["SessionStart"] = kept
 	}
 	if len(hooks) == 0 {
 		delete(settings, "hooks")
 	} else {
 		settings["hooks"] = hooks
 	}
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+	if err := writeSettings(path, settings); err != nil {
+		return false, err
 	}
 	return true, nil
 }

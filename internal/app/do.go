@@ -4,9 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
-	"net/url"
+	"focusflow/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,37 +19,12 @@ import (
 // environment. Matches the iterm.Runner mocking pattern.
 var execCommand = exec.Command
 
-// openConcurrentDB opens focusflow.db with a generous busy_timeout so that two
-// concurrent `focusflow do` processes (or two goroutines in the tests) will
-// serialize at the SQLite file level rather than failing fast with
-// SQLITE_BUSY. The pragma is applied at connection-open time via the DSN
-// so every conn in the pool inherits it. Schema creation still runs via
-// OpenDB to keep DDL in one place.
+// openConcurrentDB is kept as the name existing call sites use; every
+// open now gets WAL, a 30s busy timeout, enforced foreign keys and
+// BEGIN IMMEDIATE transactions from store.OpenDB, so there is a single
+// code path (see store.dsnFor).
 func openConcurrentDB(path string) (*sql.DB, error) {
-	// Ensure schema exists via the shared OpenDB path.
-	pre, err := flowdb.OpenDB(path)
-	if err != nil {
-		return nil, err
-	}
-	pre.Close()
-
-	q := url.Values{}
-	// 30s is enough to cover realistic bootstraps; tests finish in ms.
-	q.Set("_pragma", "busy_timeout(30000)")
-	// BEGIN IMMEDIATE acquires a RESERVED lock up-front, so two concurrent
-	// `focusflow do` transactions serialize at tx.Begin() (waiting on the busy
-	// timeout) instead of racing to the first write and failing.
-	q.Set("_txlock", "immediate")
-	dsn := "file:" + path + "?" + q.Encode()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign_keys: %w", err)
-	}
-	return db, nil
+	return store.OpenDB(path)
 }
 
 // cmdDo flips a task to in-progress, bootstraps a Claude session if
@@ -67,7 +41,7 @@ func cmdDo(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
 	here := fs.Bool("here", false, "bind the current harness session to this task instead of spawning a tab")
 	force := fs.Bool("force", false, "override the live-session guard")
-	harness := fs.String("harness", "", "claude|codex (first-session choice only)")
+	harness := fs.String("harness", "", "claude (default) | codex (only with --here: bind THIS codex session)")
 	with := fs.String("with", "", "one-off instruction to include in the session's first/next message")
 	withFile := fs.String("with-file", "", "path to a file whose contents are used as --with")
 	auto := fs.Bool("auto", false, "run headlessly in the background; implies --dangerously-skip-permissions")
@@ -80,6 +54,13 @@ func cmdDo(args []string) int {
 	}
 	if *harness != "" && *harness != "claude" && *harness != "codex" {
 		fmt.Fprintf(os.Stderr, "error: --harness must be claude or codex, got %q\n", *harness)
+		return 2
+	}
+	// focusflow spawns and resumes Claude Code sessions only. A Codex
+	// session can be bound to a task from inside Codex (`do <ref> --here`),
+	// but a spawn would silently run `claude` instead — refuse loudly.
+	if *harness == "codex" && !*here {
+		fmt.Fprintln(os.Stderr, "error: --harness codex is only supported with --here (bind this Codex session); focusflow spawns claude sessions")
 		return 2
 	}
 	if *auto && *here {
@@ -106,7 +87,7 @@ func cmdDo(args []string) int {
 		extraClaudeArgs = append(extraClaudeArgs, "--dangerously-skip-permissions")
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -125,6 +106,20 @@ func cmdDo(args []string) int {
 
 	if *here {
 		return doHere(db, task, *force)
+	}
+	if task.Harness.Valid && task.Harness.String == "codex" {
+		fmt.Fprintf(os.Stderr, "error: task %q is bound to a Codex session; resume it from Codex (focusflow only spawns claude sessions)\n", task.Slug)
+		return 1
+	}
+
+	// Live-session guard: a second tab on a session
+	// that's already being served would fork the transcript, so refuse
+	// unless --force says the user really means it.
+	if !*force && task.SessionID.Valid && isSessionLive(task.SessionID.String) {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q already has a live session (%s); switch to that tab, or pass --force to open another anyway\n",
+			task.Slug, task.SessionID.String)
+		return 1
 	}
 
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
@@ -180,7 +175,7 @@ func cmdDo(args []string) int {
 		sessionID = curSessionID.String
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if needsBootstrap {
 		resolvedHarness := *harness
 		if resolvedHarness == "" {
@@ -209,8 +204,8 @@ func cmdDo(args []string) int {
 		}
 	}
 	// Re-select to capture the canonical view.
-	row := tx.QueryRow(`SELECT `+flowdb.TaskCols+` FROM tasks WHERE slug = ?`, task.Slug)
-	fresh2, err := flowdb.ScanTask(row)
+	row := tx.QueryRow(`SELECT `+store.TaskCols+` FROM tasks WHERE slug = ?`, task.Slug)
+	fresh2, err := store.ScanTask(row)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-select task: %v\n", err)
 		return 1
@@ -231,9 +226,9 @@ func cmdDo(args []string) int {
 	}
 
 	// Look up project (may be nil).
-	var project *flowdb.Project
+	var project *store.Project
 	if task.ProjectSlug.Valid {
-		p, err := flowdb.GetProject(db, task.ProjectSlug.String)
+		p, err := store.GetProject(db, task.ProjectSlug.String)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			fmt.Fprintf(os.Stderr, "error: get project: %v\n", err)
 			return 1
@@ -302,7 +297,7 @@ func cmdDo(args []string) int {
 	}
 
 	// Post-spawn bookkeeping, outside the main tx.
-	now2 := flowdb.NowISO()
+	now2 := store.NowISO()
 	if !needsBootstrap {
 		if _, err := db.Exec(
 			`UPDATE tasks SET session_last_resumed = ? WHERE slug = ?`,
@@ -443,7 +438,7 @@ func buildBootstrapPrompt(slug string) string {
 // buildTabTitle returns a short iTerm tab title. Project-scoped tasks get
 // "<project-slug>/<task-slug>"; floating tasks get just "<task-slug>".
 // Titles longer than 30 runes are truncated with a trailing ellipsis.
-func buildTabTitle(project *flowdb.Project, task *flowdb.Task) string {
+func buildTabTitle(project *store.Project, task *store.Task) string {
 	raw := task.Slug
 	if project != nil {
 		raw = project.Slug + "/" + task.Slug
@@ -458,7 +453,7 @@ func buildTabTitle(project *flowdb.Project, task *flowdb.Task) string {
 
 // findTask resolves a user-supplied ref to exactly one non-archived task.
 // Exact alias match first, then exact slug match.
-func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
+func findTask(db *sql.DB, query string) (*store.Task, int) {
 	t, err := ResolveTask(db, query, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -468,10 +463,9 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 }
 
 // doHere binds the current process's harness session id to task without
-// spawning a tab. The env var checked mirrors flow's own detection order
-// (see currentHarnessSessionID in mirror.go / §10 of the flow skill):
-// Claude Code first, then Codex.
-func doHere(db *sql.DB, task *flowdb.Task, force bool) int {
+// spawning a tab. The env var checked follows the detection order of
+// currentHarnessSessionID (bootstrap.go): Claude Code first, then Codex.
+func doHere(db *sql.DB, task *store.Task, force bool) int {
 	sessionID := os.Getenv("CLAUDE_CODE_SESSION_ID")
 	harness := "claude"
 	if sessionID == "" {
@@ -483,7 +477,7 @@ func doHere(db *sql.DB, task *flowdb.Task, force bool) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	query := `UPDATE tasks SET status='in-progress',
 		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 		 session_id=?, session_started=?, harness=?, updated_at=?
@@ -519,17 +513,17 @@ func doHere(db *sql.DB, task *flowdb.Task, force bool) int {
 // `do --auto`. Unlike the interactive tab path, this never blocks: it
 // starts the process, records its pid, and returns immediately. The
 // process is expected to call `focusflow done` on itself when finished
-// (per the flow skill's autonomous-mode contract) — spawnHeadless does
+// (per the focusflow skill's autonomous-mode contract) — spawnHeadless does
 // not wait for that; it only tracks whether the pid is still alive via
 // refreshAutoRunStatus, called lazily from list/show.
-func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstrap bool, extraArgs []string, withText string) int {
-	root, err := flowRoot()
+func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstrap bool, extraArgs []string, withText string) int {
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	logDir := filepath.Join(root, "tasks", task.Slug, "auto-runs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: mkdir %s: %v\n", logDir, err)
 		return 1
 	}
@@ -580,7 +574,7 @@ func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstr
 		logFile.Close()
 	}()
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?, auto_run_log=?, updated_at=? WHERE slug=?`,
 		pid, now, logPath, now, task.Slug,
@@ -597,7 +591,7 @@ func spawnHeadless(db *sql.DB, task *flowdb.Task, sessionID string, needsBootstr
 // flips it to 'dead' (a crash/kill outside focusflow's control — not
 // the same as 'completed', which only `focusflow done` sets). No-op for
 // tasks with no in-flight auto run.
-func refreshAutoRunStatus(db *sql.DB, task *flowdb.Task) error {
+func refreshAutoRunStatus(db *sql.DB, task *store.Task) error {
 	if !task.AutoRunStatus.Valid || task.AutoRunStatus.String != "running" || !task.AutoRunPID.Valid {
 		return nil
 	}
@@ -614,7 +608,7 @@ func refreshAutoRunStatus(db *sql.DB, task *flowdb.Task) error {
 }
 
 func markAutoRunDead(db *sql.DB, slug string) error {
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	_, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
 		now, now, slug,

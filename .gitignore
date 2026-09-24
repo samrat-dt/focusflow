@@ -7,3 +7,4 @@
 # running the CLI with a relative FOCUSFLOW_ROOT.
 /projects/
 /tasks/
+coverage.out

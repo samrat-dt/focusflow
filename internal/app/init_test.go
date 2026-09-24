@@ -1,18 +1,18 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// initTempFlowRoot points FOCUSFLOW_ROOT at a tempdir AND redirects $HOME so
+// initTempRoot points FOCUSFLOW_ROOT at a tempdir AND redirects $HOME so
 // skill install lands inside the tempdir as well. Isolates every init test
 // from the real ~/.focusflow/ and ~/.claude/skills/. Named with an `init` prefix
-// to avoid colliding with withTempFlowRoot defined in cmd_show_test.go
+// to avoid colliding with withTempRoot defined in cmd_show_test.go
 // (which has a different signature because it returns (root, db)).
-func initTempFlowRoot(t *testing.T) string {
+func initTempRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	home := t.TempDir()
@@ -25,11 +25,16 @@ func initTempFlowRoot(t *testing.T) string {
 		os.Setenv("FOCUSFLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
 	})
+	// Tests may run from inside a live focusflow/Claude session; never let
+	// its identity leak into "am I bound to a task?" lookups.
+	for _, k := range []string{"FOCUSFLOW_TASK", "FOCUSFLOW_PROJECT", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"} {
+		t.Setenv(k, "")
+	}
 	return root
 }
 
 func TestCmdInitCreatesTree(t *testing.T) {
-	root := initTempFlowRoot(t)
+	root := initTempRoot(t)
 
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
@@ -48,7 +53,7 @@ func TestCmdInitCreatesTree(t *testing.T) {
 }
 
 func TestCmdInitCreatesDBQueryable(t *testing.T) {
-	root := initTempFlowRoot(t)
+	root := initTempRoot(t)
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
@@ -56,7 +61,7 @@ func TestCmdInitCreatesDBQueryable(t *testing.T) {
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("focusflow.db missing: %v", err)
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
 	}
@@ -69,7 +74,7 @@ func TestCmdInitCreatesDBQueryable(t *testing.T) {
 }
 
 func TestCmdInitIdempotent(t *testing.T) {
-	root := initTempFlowRoot(t)
+	root := initTempRoot(t)
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("first init rc=%d", rc)
 	}
@@ -83,7 +88,7 @@ func TestCmdInitIdempotent(t *testing.T) {
 }
 
 func TestCmdInitInstallsSkill(t *testing.T) {
-	initTempFlowRoot(t)
+	initTempRoot(t)
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
@@ -98,7 +103,7 @@ func TestCmdInitInstallsSkill(t *testing.T) {
 }
 
 func TestCmdInitSkipsSkillIfAlreadyPresent(t *testing.T) {
-	initTempFlowRoot(t)
+	initTempRoot(t)
 	home := os.Getenv("HOME")
 	skillPath := filepath.Join(home, ".claude", "skills", "focusflow", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
@@ -120,7 +125,7 @@ func TestCmdInitSkipsSkillIfAlreadyPresent(t *testing.T) {
 }
 
 func TestCmdInitRejectsExtraArgs(t *testing.T) {
-	initTempFlowRoot(t)
+	initTempRoot(t)
 	if rc := cmdInit([]string{"extra"}); rc != 2 {
 		t.Errorf("expected rc=2 for extra args, got %d", rc)
 	}

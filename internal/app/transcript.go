@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,12 +40,12 @@ func cmdTranscript(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -73,7 +73,7 @@ func cmdTranscript(args []string) int {
 }
 
 // sessionJSONLPath returns the absolute path to a task's session jsonl file.
-func sessionJSONLPath(task *flowdb.Task) (string, error) {
+func sessionJSONLPath(task *store.Task) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)

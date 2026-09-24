@@ -42,19 +42,6 @@ edits they imply. You never edit `focusflow.db` directly. You never solve
 problems during task intake — you interview, then write what the user
 said.
 
-**Mirrored-from-flow rows.** The user also runs a separate, older tool
-called `flow` (their daily-driver system) on the same machine. On every
-session start, focusflow's SessionStart hook does a best-effort,
-read-only, one-way sync: if this session is bound to a task in real
-flow's own database, that task (and its project, if any) gets mirrored
-into focusflow's database too — so it shows up in `focusflow show` /
-`focusflow list` without the user re-entering it. Mirrored rows are
-marked `mirror: yes` in `show` output and `[mirror]` in `list` output.
-Real flow is never written to, and a focusflow-native task/project is
-never overwritten by the mirror even if its slug collides with a
-mirrored one. The mirror can go briefly stale between real-flow changes
-and the next session start — that's expected, not a bug to chase.
-
 ## 2. The model
 
 - **Projects** group related tasks. Every project has a name, a slug, a
@@ -161,7 +148,8 @@ Create
 
 Sessions
   focusflow do               <ref> [--fresh] [--dangerously-skip-permissions]
-                             [--harness claude|codex] [--with "<instruction>" | --with-file <path>]
+                             [--harness claude] [--with "<instruction>" | --with-file <path>]
+                             (codex sessions can only be bound with `do <ref> --here --harness codex`, never spawned)
   focusflow do <ref> --here  [--force]         (bind THIS harness session to the task — no new tab)
   focusflow done             <ref>
 
@@ -188,13 +176,14 @@ Read
 
 Edit / mutate
   focusflow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
-  focusflow update task <ref> [--work-dir <path>] [--mkdir]
+  focusflow update task <ref> [--work-dir <path>] [--mkdir] [--name "<new name>"]
+                        [--project <slug> | --clear-project]
                         [--status backlog|in-progress|done] [--priority high|medium|low]
                         [--assignee <name>] [--clear-assignee]
                         [--due-date <date>] [--clear-due]
                         [--waiting "<who or what>"] [--clear-waiting]
                         [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
-  focusflow update project <ref> [--priority high|medium|low]
+  focusflow update project <ref> [--priority high|medium|low] [--name "<new name>"]
   focusflow archive     <ref>
   focusflow unarchive   <ref>
   (focusflow edit, focusflow archive, focusflow unarchive also accept playbook refs)
@@ -207,6 +196,24 @@ Message bus
   focusflow inbox [--as <assignee>] [--all] [--json]
   focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
   focusflow inbox read <id> [--json]
+  focusflow inbox stats [--as <assignee>]    (answered/pending + wait-time metrics)
+  focusflow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
+  focusflow stats [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
+
+Find / operate
+  focusflow search <query> [--in names,briefs,updates,notes,kb] [--project <slug>]
+                   [--regex] [--case] [--include-archived] [--limit N] [--json]
+  focusflow doctor [--fix] [--json]      health check (hooks, skill, binary drift, DB, dead work_dirs, backups)
+  focusflow backup [--out <dir>] [--keep N]   |   focusflow restore <archive> --force
+  focusflow sync [init --remote <url> | status | push]   opt-in git sync of briefs/updates/KB (never the DB)
+  focusflow version
+
+Owners (autonomous recurring agents; a charter + a cadence)
+  focusflow add owner "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  focusflow owner list | show <slug> | start <slug> | pause <slug> | retire <slug> [--delete]
+  focusflow owner next <slug> --in <dur> | --at <when>     (how a tick self-paces)
+  focusflow owner tick <slug> [--auto]  |  focusflow owner tick-due
+  focusflow owner scheduler install|uninstall|status       (opt-in launchd job running tick-due)
 
 Workdirs
   focusflow workdir list
@@ -1110,27 +1117,48 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    "<what to DO>"` hands context to that task's session (no
    interruption). Add `--reply-to <id>` so a routed reply carries
    lineage (the bus doesn't thread). `focusflow broadcast "<one-liner>"`
-   FYIs your own mailbox (the one universal recipient) — watches aren't
-   implemented yet, so a broadcast doesn't fan out to anyone else. You
-   can NEVER message your own address (focusflow rejects it).
+   FYIs your own mailbox (the one universal recipient) and fans a copy
+   out to everyone who `focusflow watch`es the sending task, its
+   project, or its assignee. `focusflow watch <task|project|assignee>`
+   subscribes you (your task's mailbox, or `--as <assignee>`);
+   `watch --list` / `watch --rm <target>` manage subscriptions. You can
+   NEVER message your own address (focusflow rejects it).
 
 **Consuming.** `focusflow inbox` lists unread; `focusflow inbox --all`
 lists everything retained; `focusflow inbox read <id>` shows/acks one
 specific message out of order; `focusflow inbox pop` consumes the oldest
 unread. `--as user` drains the human queue from a monitor session;
-`--json` for scripts.
+`--json` for scripts. `focusflow inbox stats` reports answered/pending
+counts and wait-time metrics for the human queue.
 
 A **Stop hook** (`focusflow hook stop`) is a belt-and-braces backstop for
 case 1 above: if a reply has arrived to a question this task asked the
 user via `focusflow message user` and that reply is still unread, it
 blocks the turn from ending and tells you to run `focusflow inbox pop`
 — so an outstanding question never silently goes unnoticed even if you
-forgot to check. If you see a block reason starting with
+forgot to check. The same hook also surfaces broadcasts fanned out to
+your task by a watch — once each, with a growing backoff between
+nudges. If you see a block reason starting with
 "focusflow-bus:", that's this hook; just pop the message and continue —
 factor the reported elapsed wait into your response (state may be stale
 after a long wait).
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.
+
+### 4.19 Owner ticks
+
+An **owner** is a recurring autonomous agent: a charter at
+`~/.focusflow/owners/<slug>/brief.md`, a journal under
+`~/.focusflow/owners/<slug>/updates/`, and a cadence. Each wake-up
+("tick") is a normal task tagged `owner:<slug>`; its brief embeds the
+charter and the steps. If you are running such a task: read the charter
+and journal, look at what you own (`focusflow list tasks --tag
+owner:<slug> --include-done`), delegate real work as new tasks tagged
+`owner:<slug>` (run them headlessly with `focusflow do <task> --auto`),
+park human decisions as a task tagged `question` + `owner:<slug>`, write
+a dated journal entry, self-pace with `focusflow owner next <slug> --in
+<dur>`, then `focusflow done <this-task>`. Ticks run unattended — never
+block on input you cannot get.
 
 ## 6. The `work_dir` question — rules
 

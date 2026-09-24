@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"strings"
 )
@@ -23,7 +23,7 @@ var newMessageID = func() (string, error) {
 
 // resolveCurrentTaskSlug returns the task bound to the active harness
 // session, or "" if this process isn't running inside one (a dispatch
-// session, control-center, or a bare terminal). Mirrors the flow skill's
+// session, control-center, or a bare terminal). Follows the skill's
 // §10 rule: session_id is the single source of truth, found the same way
 // currentHarnessSessionID/doHere do. Falls back to $FOCUSFLOW_TASK for
 // contexts where the env var is set but the session_id lookup can't run
@@ -73,7 +73,7 @@ func parseMessageAddress(raw string) (messageAddress, error) {
 }
 
 // messageArgs holds the parsed result of `focusflow message`'s argument
-// list. Real flow's contract is "flags may come in any order; the body is
+// list. The contract is "flags may come in any order; the body is
 // positional or --body". flag.FlagSet stops at the first non-flag arg, so
 // this is a small manual scanner instead — it also means a leading
 // "--help" is recognized as a flag (see looksLikeFlag doc comment) rather
@@ -154,7 +154,7 @@ func cmdMessage(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -185,7 +185,7 @@ func cmdMessage(args []string) int {
 	}
 
 	if parsed.ReplyTo != "" {
-		if _, err := flowdb.GetBusMessage(db, parsed.ReplyTo); err != nil {
+		if _, err := store.GetBusMessage(db, parsed.ReplyTo); err != nil {
 			fmt.Fprintf(os.Stderr, "error: --reply-to %q: no such message\n", parsed.ReplyTo)
 			return 1
 		}
@@ -196,13 +196,13 @@ func cmdMessage(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	m := &flowdb.BusMessage{
+	m := &store.BusMessage{
 		ID:           id,
 		FromAssignee: "user",
 		ToAssignee:   target.Assignee,
 		Body:         parsed.Body,
 		Urgent:       parsed.Urgent,
-		CreatedAt:    flowdb.NowISO(),
+		CreatedAt:    store.NowISO(),
 	}
 	if fromTaskSlug != "" {
 		m.FromTaskSlug = sql.NullString{String: fromTaskSlug, Valid: true}
@@ -213,7 +213,7 @@ func cmdMessage(args []string) int {
 	if parsed.ReplyTo != "" {
 		m.ReplyTo = sql.NullString{String: parsed.ReplyTo, Valid: true}
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := store.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -221,12 +221,10 @@ func cmdMessage(args []string) int {
 	return 0
 }
 
-// cmdBroadcast implements `focusflow broadcast "<one-liner>"`. Watches
-// (subscriber lists per task/project/assignee) are out of scope for this
-// pass — see the focusflow-messaging task brief — so a broadcast today
-// always lands in the human's own mailbox, the one universal recipient
-// that exists without a watch registry. Once `focusflow watch` exists,
-// this is the fan-out point to extend.
+// cmdBroadcast implements `focusflow broadcast "<one-liner>"`. The
+// original always lands in the human's own mailbox (the one universal
+// recipient); on top of that it fans out a copy to every watcher of the
+// sending task, its project, or its assignee (see watch.go).
 func cmdBroadcast(args []string) int {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Println(`focusflow broadcast "<one-liner>" [--urgent]`)
@@ -268,7 +266,7 @@ func cmdBroadcast(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -286,23 +284,31 @@ func cmdBroadcast(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	m := &flowdb.BusMessage{
+	m := &store.BusMessage{
 		ID:           id,
 		FromAssignee: "user",
 		ToAssignee:   "user",
 		Body:         body,
 		Urgent:       urgent,
 		Broadcast:    true,
-		CreatedAt:    flowdb.NowISO(),
+		CreatedAt:    store.NowISO(),
 	}
 	if fromTaskSlug != "" {
 		m.FromTaskSlug = sql.NullString{String: fromTaskSlug, Valid: true}
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := store.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Printf("Broadcast sent [%s]\n", id)
+	fanned, err := broadcastFanOut(db, m)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: fan-out: %v\n", err)
+	}
+	if fanned > 0 {
+		fmt.Printf("Broadcast sent [%s] (+%d watcher(s))\n", id, fanned)
+	} else {
+		fmt.Printf("Broadcast sent [%s]\n", id)
+	}
 	return 0
 }
 

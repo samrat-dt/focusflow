@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 func TestRunSlugBasic(t *testing.T) {
@@ -28,7 +28,7 @@ func TestRunSlugBasic(t *testing.T) {
 func TestRunSlugMinuteCollision(t *testing.T) {
 	db := openTempDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 4, 30, 10, 30, 45, 0, time.UTC)
@@ -49,7 +49,7 @@ func TestRunSlugMinuteCollision(t *testing.T) {
 func TestRunSlugSecondCollision(t *testing.T) {
 	db := openTempDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 4, 30, 10, 30, 45, 0, time.UTC)
@@ -81,7 +81,7 @@ func TestRunSlugUTCNormalization(t *testing.T) {
 
 func insertRunTaskForSlug(t *testing.T, db *sql.DB, slug, pbSlug, wd string) {
 	t.Helper()
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	_, err := db.Exec(
 		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
 		 VALUES (?, ?, 'backlog', 'playbook_run', ?, 'medium', ?, ?, ?)`,
@@ -93,7 +93,7 @@ func insertRunTaskForSlug(t *testing.T, db *sql.DB, slug, pbSlug, wd string) {
 }
 
 func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -105,7 +105,7 @@ func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
 		t.Fatalf("rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	rows, err := db.Query(`SELECT slug FROM tasks WHERE kind='playbook_run' AND playbook_slug='tri'`)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
 	}
 
 	// brief.md should be a copy of playbook brief.md.
-	root, _ := flowRoot()
+	root, _ := dataRoot()
 	pbBrief, _ := os.ReadFile(filepath.Join(root, "playbooks", "tri", "brief.md"))
 	runBrief, err := os.ReadFile(filepath.Join(root, "tasks", runSlug, "brief.md"))
 	if err != nil {
@@ -145,7 +145,7 @@ func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
 }
 
 func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -161,7 +161,7 @@ func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
 		t.Fatal()
 	}
 
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	var runSlug string
 	if err := db.QueryRow(`SELECT slug FROM tasks WHERE kind='playbook_run' AND playbook_slug='p'`).Scan(&runSlug); err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
 }
 
 func TestCmdRunPlaybookRejectsLeadingDashAsSlug(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdRun([]string{"playbook", "--help"})
 	if rc != 2 {
 		t.Errorf("run playbook --help: rc=%d, want 2 (usage error)", rc)
@@ -188,7 +188,7 @@ func TestCmdRunPlaybookRejectsLeadingDashAsSlug(t *testing.T) {
 }
 
 func TestRunPlaybook_AutoFlagPassesThroughToDo(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Nightly", "--slug", "nightly", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -203,8 +203,8 @@ func TestRunPlaybook_AutoFlagPassesThroughToDo(t *testing.T) {
 		t.Fatalf("run playbook --auto rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
+	db := openTestDB(t)
+	tasks, err := store.ListTasks(db, store.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRunPlaybook_AutoFlagPassesThroughToDo(t *testing.T) {
 }
 
 func TestRunPlaybook_HereFlagPassesThroughToDo(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Quick", "--slug", "quick", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -233,8 +233,8 @@ func TestRunPlaybook_HereFlagPassesThroughToDo(t *testing.T) {
 		t.Errorf("run playbook --here must not spawn an iTerm tab, got %d spawns", *spawnCount)
 	}
 
-	db := openFlowDB(t)
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
+	db := openTestDB(t)
+	tasks, err := store.ListTasks(db, store.TaskFilter{Kind: "playbook_run", IncludeArchived: true})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestRunPlaybook_HereFlagPassesThroughToDo(t *testing.T) {
 }
 
 func TestRunPlaybook_WithFlagPassesThroughToDo(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "Instructed", "--slug", "instructed", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -265,7 +265,7 @@ func TestRunPlaybook_WithFlagPassesThroughToDo(t *testing.T) {
 }
 
 func TestCmdRunPlaybookMissing(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	stubITerm(t)
 	if rc := cmdRun([]string{"playbook", "no-such"}); rc == 0 {
 		t.Errorf("expected non-zero rc for missing playbook")

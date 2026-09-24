@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 // cmdRun handles `focusflow run <subcommand>`. Currently only `run playbook <slug>` is supported.
@@ -48,7 +48,7 @@ func cmdRunPlaybook(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -66,7 +66,7 @@ func cmdRunPlaybook(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -85,7 +85,7 @@ func cmdRunPlaybook(args []string) int {
 	}
 
 	// Insert the run-task row.
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	_, err = db.Exec(
 		`INSERT INTO tasks (slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, status_changed_at, created_at, updated_at)
 		 VALUES (?, ?, ?, 'backlog', 'playbook_run', ?, 'medium', ?, ?, ?, ?)`,
@@ -103,11 +103,11 @@ func cmdRunPlaybook(args []string) int {
 
 	// Materialize tasks/<run-slug>/ and snapshot brief.md.
 	runDir := filepath.Join(root, "tasks", runSlug)
-	if err := os.MkdirAll(filepath.Join(runDir, "updates"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runDir, "updates"), privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: mkdir %s: %v\n", runDir, err)
 		return 1
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "brief.md"), pbBriefBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "brief.md"), pbBriefBytes, privFile); err != nil {
 		fmt.Fprintf(os.Stderr, "error: write run brief.md: %v\n", err)
 		return 1
 	}

@@ -1,7 +1,7 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -68,7 +68,7 @@ func TestCmdEditTaskBumpsUpdatedAt(t *testing.T) {
 	}
 
 	// Verify updated_at moved.
-	task, err := flowdb.GetTask(db, "authfix")
+	task, err := store.GetTask(db, "authfix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCmdEditProjectBumpsUpdatedAt(t *testing.T) {
 	if rc := cmdEdit([]string{"bigp"}); rc != 0 {
 		t.Errorf("rc=%d", rc)
 	}
-	got, err := flowdb.GetProject(db, "bigp")
+	got, err := store.GetProject(db, "bigp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestCmdEditProjectOnlyByDefault(t *testing.T) {
 }
 
 func TestCmdEditPlaybook(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
@@ -248,8 +248,8 @@ func TestCmdEditPlaybook(t *testing.T) {
 	}
 
 	// updated_at should be bumped — verify the row's updated_at is recent.
-	db := openFlowDB(t)
-	pb, err := flowdb.GetPlaybook(db, "p")
+	db := openTestDB(t)
+	pb, err := store.GetPlaybook(db, "p")
 	if err != nil {
 		t.Fatal(err)
 	}

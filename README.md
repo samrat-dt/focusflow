@@ -1,29 +1,5 @@
 # focusflow
 
-> **This is a fork of [flow](https://github.com/Facets-cloud/flow).** Bootstrapped
-> 2026-09-22 as a genuine, independently-maintained fork — not a replacement. Both
-> `flow` and `focusflow` are meant to keep running side by side, with fully
-> separate binaries (`flow` / `focusflow`), data roots (`~/.flow/` /
-> `~/.focusflow/`), Claude Code skills (`~/.claude/skills/flow/` /
-> `~/.claude/skills/focusflow/`), and SessionStart hooks. Nothing in `flow`
-> was modified to create this fork.
->
-> **What changed in the fork:** the Go module path (`flow` → `focusflow`),
-> the binary name, the skill install path, the `SessionStart` hook command
-> string, every `FLOW_*`-prefixed env var (`FOCUSFLOW_ROOT`, `FOCUSFLOW_TASK`,
-> `FOCUSFLOW_PROJECT`, `FOCUSFLOW_STALE_DAYS`), and all user-visible strings
-> (CLI output, this README, the embedded skill's own prose) — a rename pass
-> only, no behavior changes. The motivation: owning the source directly
-> (rather than working around flow's fixed schema/CLI from the outside) to
-> eventually build real `next`/`review` statuses, native project sessions, a
-> real pause/kill verb, and inbox delivery-acks — none of that is built yet;
-> this fork is the bootstrap only.
->
-> **How the two stay in sync going forward is unresolved.** No cherry-pick
-> process, hard-fork-and-drift policy, or anything else has been decided —
-> that's a real conversation to have now that the fork exists, not a
-> mechanism baked in here. Don't assume fixes land in both automatically.
-
 You don't hire a new engineer every day. You hire one, and you work together.
 
 Claude is the most capable coding partner you've ever had — but every
@@ -219,3 +195,22 @@ All runtime state lives under `~/.focusflow/` (or `$FOCUSFLOW_ROOT` if set):
 | `FOCUSFLOW_TASK` | Set by `focusflow do` — current task slug |
 | `FOCUSFLOW_PROJECT` | Set by `focusflow do` — current project slug |
 | `FOCUSFLOW_STALE_DAYS` | Staleness threshold in days (default: 3) |
+| `FOCUSFLOW_TERM` | Terminal used for new sessions: `iTerm2` (default) or `Terminal.app` |
+
+## Operations
+
+```bash
+focusflow doctor [--fix]              # health check: hooks, skill, binary drift, DB integrity, dead work_dirs, backups
+focusflow backup [--out <dir>] [--keep N]   # consistent snapshot of ~/.focusflow (default: ~/.focusflow/backups, keep 10)
+focusflow restore <archive> --force   # validate, then replace data (previous data is kept under backups/pre-restore-*)
+focusflow version                     # build version + commit
+focusflow stats [--since 30d] [--project <slug>] [--card]
+focusflow watch <task|project|assignee>   # get broadcasts fanned out to your task's inbox
+focusflow inbox stats
+```
+
+`make install` copies the binary to `~/.local/bin` (the one installed copy), refreshes the
+skill and the three Claude Code hooks (SessionStart, UserPromptSubmit, Stop), and restarts a
+control-center launchd job if one is installed. The database runs in WAL mode with a 30s busy
+timeout, and its schema is versioned (`PRAGMA user_version`); a database newer than the binary is
+refused rather than opened. Everything under `~/.focusflow` is private to your user (0700/0600).

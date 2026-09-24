@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,10 +28,10 @@ func TestListProjects_FormatTSVAccepted(t *testing.T) {
 }
 
 func TestListPlaybooks_FormatTSVAccepted(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	out := captureShowStdout(t, func() {
@@ -48,7 +48,7 @@ func TestListPlaybooks_FormatTSVAccepted(t *testing.T) {
 func TestListTags_FormatFlags(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "tagged", "Tagged", "backlog", "medium", filepath.Join(root, "x"), nil)
-	if err := flowdb.AddTag(db, "tagged", "urgent"); err != nil {
+	if err := store.AddTag(db, "tagged", "urgent"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -82,10 +82,10 @@ func TestListTags_FormatFlags(t *testing.T) {
 }
 
 func TestListRuns_FormatFlags(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	insertRunTaskForSlug(t, db, "p--run-1", "p", wd)
@@ -123,10 +123,10 @@ func TestListTasks_TagFilter(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "task-a", "A", "backlog", "medium", filepath.Join(root, "x"), nil)
 	insertTask(t, db, "task-b", "B", "backlog", "medium", filepath.Join(root, "x"), nil)
-	if err := flowdb.AddTag(db, "task-a", "urgent"); err != nil {
+	if err := store.AddTag(db, "task-a", "urgent"); err != nil {
 		t.Fatal(err)
 	}
-	if err := flowdb.AddTag(db, "task-b", "backend"); err != nil {
+	if err := store.AddTag(db, "task-b", "backend"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +236,7 @@ func TestListTasks_FormatJSON_RefreshesDeadAutoRun(t *testing.T) {
 	}
 
 	// The DB row itself should now also read 'dead', not just the rendered output.
-	task, err := flowdb.GetTask(db, "auto-dead")
+	task, err := store.GetTask(db, "auto-dead")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestListTasks_FormatJSON_ExactFieldSet(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertProject(t, db, "proj", "Proj", filepath.Join(root, "x"), "medium")
 	insertTask(t, db, "task-a", "A", "backlog", "medium", filepath.Join(root, "x"), "proj")
-	if err := flowdb.AddTag(db, "task-a", "urgent"); err != nil {
+	if err := store.AddTag(db, "task-a", "urgent"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +269,9 @@ func TestListTasks_FormatJSON_ExactFieldSet(t *testing.T) {
 	}
 	row := rows[0]
 
-	wantKeys := []string{"slug", "name", "status", "priority", "project", "live", "updated", "tags", "archived", "auto_run", "age_days"}
+	// live, auto_run and archived are omitted when empty/false, exactly
+	// consistently; this task has a tag but is otherwise plain.
+	wantKeys := []string{"slug", "name", "status", "priority", "project", "updated", "tags", "age_days"}
 	if len(row) != len(wantKeys) {
 		t.Errorf("row has %d keys, want %d: got keys %v", len(row), len(wantKeys), keysOf(row))
 	}
@@ -279,7 +281,7 @@ func TestListTasks_FormatJSON_ExactFieldSet(t *testing.T) {
 		}
 	}
 	if _, hasKind := row["kind"]; hasKind {
-		t.Error("row must NOT have a 'kind' key — live flow never emits one, even under --kind all")
+		t.Error("row must NOT have a 'kind' key — the output never carries one, even under --kind all")
 	}
 	if row["slug"] != "task-a" {
 		t.Errorf("slug = %v, want task-a", row["slug"])
@@ -394,7 +396,7 @@ func TestCmdListTasksArchivedHiddenByDefault(t *testing.T) {
 	// Use backlog (not done) for the archived row so this test isolates
 	// archived-visibility from done-visibility.
 	insertTask(t, db, "dead", "D", "backlog", "low", filepath.Join(root, "x"), nil)
-	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "dead"); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, store.NowISO(), "dead"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -618,7 +620,7 @@ func TestCmdListProjectsArchivedHidden(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertProject(t, db, "live", "L", filepath.Join(root, "x"), "high")
 	insertProject(t, db, "gone", "G", filepath.Join(root, "y"), "low")
-	if _, err := db.Exec(`UPDATE projects SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "gone"); err != nil {
+	if _, err := db.Exec(`UPDATE projects SET archived_at = ? WHERE slug = ?`, store.NowISO(), "gone"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -706,10 +708,10 @@ func TestParseSince(t *testing.T) {
 }
 
 func TestListPlaybooks_FormatJSON(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -729,13 +731,13 @@ func TestListPlaybooks_FormatJSON(t *testing.T) {
 }
 
 func TestCmdListPlaybooks(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "beta", Name: "Beta", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "beta", Name: "Beta", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -750,13 +752,13 @@ func TestCmdListPlaybooks(t *testing.T) {
 }
 
 func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "P", "--slug", "p1", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
 	}
-	db := openFlowDB(t)
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{
+	db := openTestDB(t)
+	if err := store.UpsertPlaybook(db, &store.Playbook{
 		Slug:        "in-p1",
 		Name:        "In",
 		WorkDir:     wd,
@@ -764,7 +766,7 @@ func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "floating", Name: "F", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "floating", Name: "F", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -782,15 +784,15 @@ func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
 }
 
 func TestListTasksDefaultExcludesPlaybookRuns(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
 
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
 		 VALUES ('pb--2026-04-30-10-30', 'pb run', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
@@ -813,13 +815,13 @@ func TestListTasksDefaultExcludesPlaybookRuns(t *testing.T) {
 }
 
 func TestListTasksKindOverride(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
 		 VALUES ('pb--2026-04-30-10-30', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
@@ -838,14 +840,14 @@ func TestListTasksKindOverride(t *testing.T) {
 }
 
 func TestListTasksKindAll(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	if _, err := db.Exec(
 		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
 		 VALUES ('pb--run', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
@@ -864,16 +866,16 @@ func TestListTasksKindAll(t *testing.T) {
 }
 
 func TestCmdListRuns(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p1", Name: "P1", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p1", Name: "P1", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p2", Name: "P2", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p2", Name: "P2", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	for _, slug := range []string{"p1--2026-04-30-10-30", "p1--2026-04-30-11-00"} {
 		if _, err := db.Exec(
 			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
@@ -916,13 +918,13 @@ func TestCmdListRuns(t *testing.T) {
 }
 
 func TestCmdListRunsByStatus(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	for _, r := range []struct{ slug, status string }{
 		{"p--ip", "in-progress"},
 		{"p--dn", "done"},

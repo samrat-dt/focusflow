@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -28,6 +29,8 @@ func cmdList(args []string) int {
 		return listRunsCmd(args[1:])
 	case "tags":
 		return listTagsCmd(args[1:])
+	case "owners":
+		return ownerList(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -57,7 +60,7 @@ func listTasksCmd(args []string) int {
 		return 2
 	}
 
-	filter := flowdb.TaskFilter{
+	filter := store.TaskFilter{
 		Status:          *status,
 		Project:         *project,
 		Priority:        *priority,
@@ -83,19 +86,19 @@ func listTasksCmd(args []string) int {
 		filter.Since = s.Format(time.RFC3339)
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
 	}
 	defer db.Close()
 
-	tasks, err := flowdb.ListTasks(db, filter)
+	tasks, err := store.ListTasks(db, filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -116,7 +119,7 @@ func listTasksCmd(args []string) int {
 		}
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -151,7 +154,6 @@ func listTasksCmd(args []string) int {
 		waiting  string
 		archived bool
 		done     bool
-		mirror   bool
 	}
 	warnPrefix, boltPrefix := "⚠ ", "⚡ "
 	if *noColor {
@@ -174,7 +176,6 @@ func listTasksCmd(args []string) int {
 			pri:      priorityShort(t.Priority),
 			archived: t.ArchivedAt.Valid,
 			done:     t.Status == "done",
-			mirror:   t.Source == "flow-mirror",
 		}
 		if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
 			r.project = "(" + t.ProjectSlug.String + ")"
@@ -254,9 +255,6 @@ func listTasksCmd(args []string) int {
 			sb.WriteString("  ")
 			sb.WriteString(r.waiting)
 		}
-		if r.mirror {
-			sb.WriteString("  [mirror]")
-		}
 		if r.archived {
 			sb.WriteString("  (archived)")
 		}
@@ -277,8 +275,8 @@ type taskRowCommon struct {
 // single psLines() call shared across every task in a render) so that
 // rendering many rows forks `ps` once, not once per task with a
 // session_id.
-func buildTaskRowCommon(db *sql.DB, t *flowdb.Task, procLines []string) (taskRowCommon, error) {
-	tags, err := flowdb.ListTagsForTask(db, t.Slug)
+func buildTaskRowCommon(db *sql.DB, t *store.Task, procLines []string) (taskRowCommon, error) {
+	tags, err := store.ListTagsForTask(db, t.Slug)
 	if err != nil {
 		return taskRowCommon{}, err
 	}
@@ -286,32 +284,33 @@ func buildTaskRowCommon(db *sql.DB, t *flowdb.Task, procLines []string) (taskRow
 	return taskRowCommon{tags: tags, live: live}, nil
 }
 
-// autoRunDisplay renders the auto_run column exactly as flow does:
+// autoRunDisplay renders the auto_run column:
 // "" when never run, otherwise one of running|completed|dead.
-func autoRunDisplay(t *flowdb.Task) string {
+func autoRunDisplay(t *store.Task) string {
 	if !t.AutoRunStatus.Valid {
 		return ""
 	}
 	return t.AutoRunStatus.String
 }
 
-// renderTasksJSON prints tasks as a JSON array matching live flow's
-// exact field set. Field names/order come from a live sample captured
-// during the focusflow-parity task; there is deliberately no "kind"
-// key, even though the Task struct has one — live flow never emits it.
-func renderTasksJSON(tasks []*flowdb.Task, db *sql.DB) int {
+// renderTasksJSON prints tasks as a JSON array with a fixed field set
+// (control-center depends on it); there is deliberately no "kind"
+// key, even though the Task struct has one — the output never includes it.
+func renderTasksJSON(tasks []*store.Task, db *sql.DB) int {
+	// Key order is fixed and optional keys are omitted when empty: live, auto_run,
+	// tags and archived only appear when set.
 	type jsonRow struct {
 		Slug     string   `json:"slug"`
 		Name     string   `json:"name"`
 		Status   string   `json:"status"`
 		Priority string   `json:"priority"`
-		Project  string   `json:"project"`
-		Live     bool     `json:"live"`
-		Updated  string   `json:"updated"`
-		Tags     []string `json:"tags"`
-		Archived bool     `json:"archived"`
-		AutoRun  string   `json:"auto_run"`
+		Project  string   `json:"project,omitempty"`
+		Live     bool     `json:"live,omitempty"`
 		AgeDays  int      `json:"age_days"`
+		AutoRun  string   `json:"auto_run,omitempty"`
+		Updated  string   `json:"updated"`
+		Tags     []string `json:"tags,omitempty"`
+		Archived bool     `json:"archived,omitempty"`
 	}
 	// Fork `ps` once for the whole render, not once per task — this list
 	// can return hundreds of rows (control-center's own call passes
@@ -330,9 +329,6 @@ func renderTasksJSON(tasks []*flowdb.Task, db *sql.DB) int {
 			project = t.ProjectSlug.String
 		}
 		tags := common.tags
-		if tags == nil {
-			tags = []string{}
-		}
 		rows = append(rows, jsonRow{
 			Slug: t.Slug, Name: t.Name, Status: t.Status, Priority: t.Priority,
 			Project: project, Live: common.live, Updated: t.UpdatedAt, Tags: tags,
@@ -350,8 +346,8 @@ func renderTasksJSON(tasks []*flowdb.Task, db *sql.DB) int {
 }
 
 // renderTasksTSV prints tasks as tab-separated rows matching live
-// flow's exact TSV header/column order, captured from a live sample.
-func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
+// a fixed TSV header/column order (empty cells for false/unset values).
+func renderTasksTSV(tasks []*store.Task, db *sql.DB, root string) int {
 	w := os.Stdout
 	fmt.Fprintln(w, strings.Join([]string{
 		"slug", "status", "priority", "project", "age_days", "due_in_days", "due_label",
@@ -382,7 +378,7 @@ func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
 				dueLabel = "due"
 			}
 		}
-		stale, staleDays := "false", ""
+		stale, staleDays := "", ""
 		if t.Status == "in-progress" && !t.ArchivedAt.Valid {
 			if days, ok := taskStaleness(t, root); ok {
 				stale = "true"
@@ -405,8 +401,8 @@ func renderTasksTSV(tasks []*flowdb.Task, db *sql.DB, root string) int {
 			t.Slug, t.Status, t.Priority, project,
 			fmt.Sprintf("%d", daysInStatus(t, now)), dueInDays, dueLabel,
 			stale, staleDays, waitingOn, assignee,
-			fmt.Sprintf("%t", common.live), autoRunDisplay(t), pid,
-			fmt.Sprintf("%t", t.ArchivedAt.Valid), strings.Join(common.tags, ","),
+			boolCell(common.live), autoRunDisplay(t), pid,
+			boolCell(t.ArchivedAt.Valid), strings.Join(common.tags, ","),
 		}, "\t"))
 	}
 	return 0
@@ -428,18 +424,20 @@ func listTagsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	defer db.Close()
-	tags, err := flowdb.ListAllTags(db)
+	tags, err := store.ListAllTags(db)
+	// Busiest tags first (count desc, then name).
+	sort.SliceStable(tags, func(i, j int) bool { return tags[i].Count > tags[j].Count })
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -461,7 +459,7 @@ func listTagsCmd(args []string) int {
 }
 
 // renderTagsJSON prints tags as a JSON array of {tag, count}.
-func renderTagsJSON(tags []flowdb.TagCount) int {
+func renderTagsJSON(tags []store.TagCount) int {
 	type jsonRow struct {
 		Tag   string `json:"tag"`
 		Count int    `json:"count"`
@@ -480,11 +478,11 @@ func renderTagsJSON(tags []flowdb.TagCount) int {
 }
 
 // renderTagsTSV prints tags as tab-separated rows.
-func renderTagsTSV(tags []flowdb.TagCount) int {
+func renderTagsTSV(tags []store.TagCount) int {
 	w := os.Stdout
 	fmt.Fprintln(w, strings.Join([]string{"tag", "count"}, "\t"))
 	for _, tc := range tags {
-		fmt.Fprintln(w, fmt.Sprintf("%s\t%d", tc.Tag, tc.Count))
+		fmt.Fprintf(w, "%s\t%d\n", tc.Tag, tc.Count)
 	}
 	return 0
 }
@@ -505,23 +503,23 @@ func listProjectsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: --format must be table|json|tsv, got %q\n", *format)
 		return 2
 	}
-	filter := flowdb.ProjectFilter{
+	filter := store.ProjectFilter{
 		Status:          *status,
 		IncludeArchived: *includeArchived,
 	}
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
 	}
 	defer db.Close()
 
-	projects, err := flowdb.ListProjects(db, filter)
+	projects, err := store.ListProjects(db, filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -540,7 +538,7 @@ func listProjectsCmd(args []string) int {
 	// Sort projects by priority (high, med, low) then slug. ListProjects
 	// currently sorts by slug only, so reorder here.
 	// A stable insertion sort is fine at the volumes we expect.
-	sortedProjects := make([]*flowdb.Project, len(projects))
+	sortedProjects := make([]*store.Project, len(projects))
 	copy(sortedProjects, projects)
 	priorityOrder := func(p string) int {
 		switch p {
@@ -611,34 +609,30 @@ func listProjectsCmd(args []string) int {
 		if len(segs) > 0 {
 			breakdown = "(" + strings.Join(segs, ", ") + ")"
 		}
-		mirror := ""
-		if p.Source == "flow-mirror" {
-			mirror = "  [mirror]"
-		}
 		arch := ""
 		if p.ArchivedAt.Valid {
 			arch = "  (archived)"
 		}
-		fmt.Printf("  %-6s %-*s   %-7s %s %s%s%s\n",
-			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, mirror, arch)
+		fmt.Printf("  %-6s %-*s   %-7s %s %s%s\n",
+			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, arch)
 	}
 	return 0
 }
 
-// renderProjectsJSON prints projects as a JSON array. Field set is
-// derived from this command's own table output (slug, name, status,
-// priority, work_dir, task counts, archived) — no live-flow JSON sample
-// was captured for `list projects`, so this is a reasonable-effort
-// projection, not a byte-for-byte verified schema like `list tasks`.
-func renderProjectsJSON(projects []*flowdb.Project, db *sql.DB) int {
+// renderProjectsJSON prints projects as a JSON array with per-status task
+// counts; archived and other optional keys appear only when set.
+func renderProjectsJSON(projects []*store.Project, db *sql.DB) int {
 	type jsonRow struct {
-		Slug     string `json:"slug"`
-		Name     string `json:"name"`
-		Status   string `json:"status"`
-		Priority string `json:"priority"`
-		WorkDir  string `json:"work_dir"`
-		Tasks    int    `json:"tasks"`
-		Archived bool   `json:"archived"`
+		Slug       string `json:"slug"`
+		Name       string `json:"name"`
+		Priority   string `json:"priority"`
+		Status     string `json:"status"`
+		Total      int    `json:"total"`
+		InProgress int    `json:"in_progress"`
+		Backlog    int    `json:"backlog"`
+		Done       int    `json:"done"`
+		Archived   bool   `json:"archived,omitempty"`
+		Updated    string `json:"updated"`
 	}
 	rows := make([]jsonRow, 0, len(projects))
 	for _, p := range projects {
@@ -648,8 +642,9 @@ func renderProjectsJSON(projects []*flowdb.Project, db *sql.DB) int {
 			return 1
 		}
 		rows = append(rows, jsonRow{
-			Slug: p.Slug, Name: p.Name, Status: p.Status, Priority: p.Priority,
-			WorkDir: p.WorkDir, Tasks: counts.total, Archived: p.ArchivedAt.Valid,
+			Slug: p.Slug, Name: p.Name, Priority: p.Priority, Status: p.Status,
+			Total: counts.total, InProgress: counts.inProg, Backlog: counts.backlog, Done: counts.done,
+			Archived: p.ArchivedAt.Valid, Updated: p.UpdatedAt,
 		})
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -661,11 +656,10 @@ func renderProjectsJSON(projects []*flowdb.Project, db *sql.DB) int {
 	return 0
 }
 
-// renderProjectsTSV prints projects as tab-separated rows, using the
-// same field set as renderProjectsJSON.
-func renderProjectsTSV(projects []*flowdb.Project, db *sql.DB) int {
+// renderProjectsTSV prints projects with a fixed header.
+func renderProjectsTSV(projects []*store.Project, db *sql.DB) int {
 	w := os.Stdout
-	fmt.Fprintln(w, strings.Join([]string{"slug", "name", "status", "priority", "work_dir", "tasks", "archived"}, "\t"))
+	fmt.Fprintln(w, strings.Join([]string{"slug", "priority", "status", "total", "in_progress", "backlog", "done", "archived"}, "\t"))
 	for _, p := range projects {
 		counts, err := projectTaskCounts(db, p.Slug)
 		if err != nil {
@@ -673,8 +667,10 @@ func renderProjectsTSV(projects []*flowdb.Project, db *sql.DB) int {
 			return 1
 		}
 		fmt.Fprintln(w, strings.Join([]string{
-			p.Slug, p.Name, p.Status, p.Priority, p.WorkDir,
-			fmt.Sprintf("%d", counts.total), fmt.Sprintf("%t", p.ArchivedAt.Valid),
+			p.Slug, p.Priority, p.Status,
+			fmt.Sprintf("%d", counts.total), fmt.Sprintf("%d", counts.inProg),
+			fmt.Sprintf("%d", counts.backlog), fmt.Sprintf("%d", counts.done),
+			boolCell(p.ArchivedAt.Valid),
 		}, "\t"))
 	}
 	return 0
@@ -697,19 +693,19 @@ func listPlaybooksCmd(args []string) int {
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	defer db.Close()
 
-	pbs, err := flowdb.ListPlaybooks(db, flowdb.PlaybookFilter{
+	pbs, err := store.ListPlaybooks(db, store.PlaybookFilter{
 		Project:         *project,
 		IncludeArchived: *includeArchived,
 	})
@@ -741,12 +737,8 @@ func listPlaybooksCmd(args []string) int {
 	return 0
 }
 
-// renderPlaybooksJSON prints playbooks as a JSON array. Field set is
-// derived from this command's own table output (slug, name, project,
-// work_dir, archived) — no live-flow JSON sample was captured for
-// `list playbooks`, so this is a reasonable-effort projection, not a
-// byte-for-byte verified schema like `list tasks`.
-func renderPlaybooksJSON(pbs []*flowdb.Playbook) int {
+// renderPlaybooksJSON prints playbooks as a JSON array.
+func renderPlaybooksJSON(pbs []*store.Playbook) int {
 	type jsonRow struct {
 		Slug     string `json:"slug"`
 		Name     string `json:"name"`
@@ -776,7 +768,7 @@ func renderPlaybooksJSON(pbs []*flowdb.Playbook) int {
 
 // renderPlaybooksTSV prints playbooks as tab-separated rows, using the
 // same field set as renderPlaybooksJSON.
-func renderPlaybooksTSV(pbs []*flowdb.Playbook) int {
+func renderPlaybooksTSV(pbs []*store.Playbook) int {
 	w := os.Stdout
 	fmt.Fprintln(w, strings.Join([]string{"slug", "name", "project", "work_dir", "archived"}, "\t"))
 	for _, pb := range pbs {
@@ -812,19 +804,19 @@ func listRunsCmd(args []string) int {
 		playbookSlug = fs.Arg(0)
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	defer db.Close()
 
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+	tasks, err := store.ListTasks(db, store.TaskFilter{
 		Kind:            "playbook_run",
 		PlaybookSlug:    playbookSlug,
 		Status:          *status,
@@ -858,10 +850,8 @@ func listRunsCmd(args []string) int {
 	return 0
 }
 
-// renderRunsJSON prints playbook runs as a JSON array. Field set is
-// derived from this command's own table output (slug, status, playbook,
-// archived) — no live-flow JSON sample was captured for `list runs`.
-func renderRunsJSON(tasks []*flowdb.Task) int {
+// renderRunsJSON prints playbook runs as a JSON array.
+func renderRunsJSON(tasks []*store.Task) int {
 	type jsonRow struct {
 		Slug     string `json:"slug"`
 		Status   string `json:"status"`
@@ -887,7 +877,7 @@ func renderRunsJSON(tasks []*flowdb.Task) int {
 
 // renderRunsTSV prints playbook runs as tab-separated rows, using the
 // same field set as renderRunsJSON.
-func renderRunsTSV(tasks []*flowdb.Task) int {
+func renderRunsTSV(tasks []*store.Task) int {
 	w := os.Stdout
 	fmt.Fprintln(w, strings.Join([]string{"slug", "status", "playbook", "archived"}, "\t"))
 	for _, tk := range tasks {
@@ -997,8 +987,17 @@ func parseSince(s string, now time.Time) (time.Time, error) {
 // internals elsewhere.
 func ensureUpdatesDir(root, kind, slug string) (string, error) {
 	dir := filepath.Join(root, kind, slug, "updates")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, privDir); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// boolCell renders a TSV boolean: "true" when set,
+// empty when not.
+func boolCell(b bool) string {
+	if b {
+		return "true"
+	}
+	return ""
 }

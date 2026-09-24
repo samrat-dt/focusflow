@@ -2,7 +2,7 @@ package app
 
 import (
 	"database/sql"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +12,7 @@ import (
 // focusflow.db, and returns the opened handle. The db handle is closed on
 // cleanup. We intentionally close the db before invoking the cmd*
 // functions so that the production code path (which opens its own db
-// via flowDBPath) is exercised end-to-end.
+// via dataDBPath) is exercised end-to-end.
 func setupArchiveTestEnv(t *testing.T) (root string) {
 	t.Helper()
 	root = t.TempDir()
@@ -21,7 +21,7 @@ func setupArchiveTestEnv(t *testing.T) (root string) {
 		t.Fatalf("mkdir root: %v", err)
 	}
 	// Initialize the DB by opening it once.
-	db, err := flowdb.OpenDB(filepath.Join(root, "focusflow.db"))
+	db, err := store.OpenDB(filepath.Join(root, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -31,7 +31,7 @@ func setupArchiveTestEnv(t *testing.T) (root string) {
 
 func reopenArchiveTestDB(t *testing.T, root string) *sql.DB {
 	t.Helper()
-	db, err := flowdb.OpenDB(filepath.Join(root, "focusflow.db"))
+	db, err := store.OpenDB(filepath.Join(root, "focusflow.db"))
 	if err != nil {
 		t.Fatalf("reopen db: %v", err)
 	}
@@ -172,16 +172,16 @@ func TestCmdArchiveIdempotent(t *testing.T) {
 }
 
 func TestCmdArchivePlaybook(t *testing.T) {
-	setupFlowRoot(t)
-	db := openFlowDB(t)
+	setupRoot(t)
+	db := openTestDB(t)
 	wd := t.TempDir()
-	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+	if err := store.UpsertPlaybook(db, &store.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
 		t.Fatal(err)
 	}
 	if rc := cmdArchive([]string{"p"}); rc != 0 {
 		t.Errorf("archive rc=%d", rc)
 	}
-	pb, err := flowdb.GetPlaybook(db, "p")
+	pb, err := store.GetPlaybook(db, "p")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestCmdArchivePlaybook(t *testing.T) {
 	if rc := cmdUnarchive([]string{"p"}); rc != 0 {
 		t.Errorf("unarchive rc=%d", rc)
 	}
-	pb, _ = flowdb.GetPlaybook(db, "p")
+	pb, _ = store.GetPlaybook(db, "p")
 	if pb.ArchivedAt.Valid {
 		t.Errorf("ArchivedAt should be cleared")
 	}

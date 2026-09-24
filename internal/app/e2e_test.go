@@ -2,8 +2,8 @@ package app
 
 import (
 	"encoding/json"
-	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,8 +20,8 @@ import (
 // untouched.
 func TestE2EFullRoundtrip(t *testing.T) {
 	tmp := t.TempDir()
-	flowRoot := filepath.Join(tmp, "focusflow")
-	t.Setenv("FOCUSFLOW_ROOT", flowRoot)
+	dataRoot := filepath.Join(tmp, "focusflow")
+	t.Setenv("FOCUSFLOW_ROOT", dataRoot)
 	t.Setenv("HOME", tmp)
 
 	// Fake repo that serves as the project's work_dir.
@@ -59,30 +59,30 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 1. init — creates tree, db, installs skill
 	step("init", cmdInit(nil))
-	if _, err := os.Stat(filepath.Join(flowRoot, "focusflow.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(dataRoot, "focusflow.db")); err != nil {
 		t.Fatalf("focusflow.db not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(flowRoot, "projects")); err != nil {
+	if _, err := os.Stat(filepath.Join(dataRoot, "projects")); err != nil {
 		t.Fatalf("projects dir not created: %v", err)
 	}
 
 	// 2. add project
 	step("add project", cmdAdd([]string{"project", "Budgeting App Revamp", "--work-dir", repo}))
-	if _, err := os.Stat(filepath.Join(flowRoot, "projects", "budgeting-app-revamp", "brief.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dataRoot, "projects", "budgeting-app-revamp", "brief.md")); err != nil {
 		t.Fatalf("project brief.md not created: %v", err)
 	}
 
 	// 3. add task under the project
 	step("add task", cmdAdd([]string{"task", "Fix Auth Token Expiry",
 		"--project", "budgeting-app-revamp"}))
-	taskDir := filepath.Join(flowRoot, "tasks", "fix-auth-token-expiry")
+	taskDir := filepath.Join(dataRoot, "tasks", "fix-auth-token-expiry")
 	if _, err := os.Stat(filepath.Join(taskDir, "brief.md")); err != nil {
 		t.Fatalf("task brief.md not created: %v", err)
 	}
 
 	// 4. add a floating task (auto workspace)
 	step("add floating task", cmdAdd([]string{"task", "Scratch Investigation"}))
-	scratchDir := filepath.Join(flowRoot, "tasks", "scratch-investigation", "workspace")
+	scratchDir := filepath.Join(dataRoot, "tasks", "scratch-investigation", "workspace")
 	if _, err := os.Stat(scratchDir); err != nil {
 		t.Fatalf("floating task workspace not created: %v", err)
 	}
@@ -91,12 +91,12 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	// session_id lands in the DB synchronously; no self-registration
 	// step is needed.
 	step("do", cmdDo([]string{"fix-auth-token-expiry"}))
-	db, err := flowdb.OpenDB(filepath.Join(flowRoot, "focusflow.db"))
+	db, err := store.OpenDB(filepath.Join(dataRoot, "focusflow.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	task, err := flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, err := store.GetTask(db, "fix-auth-token-expiry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 6. do again — now session_id is populated, should spawn --resume.
 	step("do resume", cmdDo([]string{"fix-auth-token-expiry"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if task.SessionID.String != fixedSID {
 		t.Errorf("session_id should be preserved across resume: got %q", task.SessionID.String)
 	}
@@ -153,20 +153,20 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 12. waiting (via update task --waiting/--clear-waiting)
 	step("waiting set", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--waiting", "Alice review"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if !task.WaitingOn.Valid || task.WaitingOn.String != "Alice review" {
 		t.Errorf("waiting_on = %v, want Alice review", task.WaitingOn)
 	}
 
 	step("waiting clear", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--clear-waiting"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if task.WaitingOn.Valid {
 		t.Errorf("waiting_on should be cleared, got %v", task.WaitingOn)
 	}
 
 	// 13. priority (via update task --priority)
 	step("priority", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--priority", "high"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if task.Priority != "high" {
 		t.Errorf("priority = %q, want high", task.Priority)
 	}
@@ -184,7 +184,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 16. done
 	step("done", cmdDone([]string{"fix-auth-token-expiry"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if task.Status != "done" {
 		t.Errorf("status after done = %q, want done", task.Status)
 	}
@@ -195,14 +195,14 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 17. archive
 	step("archive", cmdArchive([]string{"fix-auth-token-expiry"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if !task.ArchivedAt.Valid {
 		t.Errorf("archived_at not set after archive")
 	}
 
 	// 18. list tasks (archived should be hidden)
 	step("list tasks post-archive", cmdList([]string{"tasks"}))
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{})
+	tasks, err := store.ListTasks(db, store.TaskFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,14 +214,14 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 19. unarchive
 	step("unarchive", cmdUnarchive([]string{"fix-auth-token-expiry"}))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
+	task, _ = store.GetTask(db, "fix-auth-token-expiry")
 	if task.ArchivedAt.Valid {
 		t.Errorf("archived_at not cleared after unarchive: %v", task.ArchivedAt)
 	}
 
 	// 20. workdir list — the project's work_dir should have been auto-registered
 	step("workdir list", cmdWorkdir([]string{"list"}))
-	wd, err := flowdb.GetWorkdir(db, repo)
+	wd, err := store.GetWorkdir(db, repo)
 	if err != nil {
 		t.Fatalf("repo not auto-registered as workdir: %v", err)
 	}
@@ -231,13 +231,13 @@ func TestE2EFullRoundtrip(t *testing.T) {
 }
 
 // TestE2E_ControlCenterExactListTasksCall proves, end to end, that the
-// exact call control-center's lib/flow-reader.js makes —
+// exact call control-center makes —
 // `focusflow list tasks --format json --include-done --include-archived
 // --kind all` — parses cleanly and produces every field readTasks()
 // expects, with no missing/mismatched field, against a realistic mix of
 // task states (active, archived, done).
 func TestE2E_ControlCenterExactListTasksCall(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 
 	step := func(name string, rc int) {
@@ -269,25 +269,28 @@ func TestE2E_ControlCenterExactListTasksCall(t *testing.T) {
 		t.Fatalf("expected 3 rows (ship-it, old-one archived, finished done), got %d: %v", len(rows), rows)
 	}
 
-	// readTasks() in control-center's lib/flow-reader.js reads: slug,
-	// name, project, status, priority, tags, live, archived. Confirm
-	// every one is present and correctly typed on every row, not just
-	// the first.
-	requiredKeys := []string{"slug", "name", "project", "status", "priority", "tags", "live", "archived"}
+	// control-center's task reader uses slug, name,
+	// project, status, priority always, and tolerates live/tags/archived
+	// being absent (`j.live`, `j.tags ?? ...`, `!!j.archived`), so we omit
+	// them when empty/false. When present they must be correctly typed.
+	requiredKeys := []string{"slug", "name", "status", "priority", "age_days", "updated"} // project is omitted for floating tasks
 	for _, row := range rows {
 		for _, k := range requiredKeys {
 			if _, ok := row[k]; !ok {
 				t.Errorf("row %v missing key %q required by control-center's readTasks()", row["slug"], k)
 			}
 		}
-		if _, ok := row["tags"].([]any); !ok {
-			t.Errorf("row %v: tags must be a JSON array, got %T", row["slug"], row["tags"])
+		if v, ok := row["tags"]; ok {
+			if _, isArr := v.([]any); !isArr {
+				t.Errorf("row %v: tags must be a JSON array when present, got %T", row["slug"], v)
+			}
 		}
-		if _, ok := row["live"].(bool); !ok {
-			t.Errorf("row %v: live must be a JSON boolean, got %T", row["slug"], row["live"])
-		}
-		if _, ok := row["archived"].(bool); !ok {
-			t.Errorf("row %v: archived must be a JSON boolean, got %T", row["slug"], row["archived"])
+		for _, k := range []string{"live", "archived"} {
+			if v, ok := row[k]; ok {
+				if _, isBool := v.(bool); !isBool {
+					t.Errorf("row %v: %s must be a JSON boolean when present, got %T", row["slug"], k, v)
+				}
+			}
 		}
 	}
 }

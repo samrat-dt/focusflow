@@ -1,8 +1,8 @@
 package app
 
 import (
-	"focusflow/internal/flowdb"
 	"focusflow/internal/iterm"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,12 +163,12 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 	cmdAdd([]string{"task", "Transcript Test", "--slug", "tx-test", "--work-dir", repo})
 
 	// Simulate session bootstrap.
-	dbPath, _ := flowDBPath()
-	db, _ := flowdb.OpenDB(dbPath)
+	dbPath, _ := dataDBPath()
+	db, _ := store.OpenDB(dbPath)
 	defer db.Close()
 
 	sid := "deadbeef-1234-5678-9abc-def012345678"
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	db.Exec(`UPDATE tasks SET session_id=?, session_started=?, updated_at=? WHERE slug=?`,
 		sid, now, now, "tx-test")
 

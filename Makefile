@@ -3,10 +3,16 @@ REPO_DIR := $(shell pwd)
 
 # VERSION is injected into the binary via -ldflags. Defaults to "dev";
 # the release workflow overrides this with VERSION=<tag>.
-VERSION  ?= dev
+VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: build install uninstall test clean
+# Where `make install` puts the binary. ~/.local/bin is what launchd jobs
+# (control-center's launchd job) and hooks resolve, so there is exactly one
+# installed copy — never a second one in the repo dir that can drift.
+PREFIX   ?= $(HOME)/.local
+CC_LABEL := local.control-center
+
+.PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
@@ -14,19 +20,45 @@ build:
 test:
 	go test ./...
 
+vet:
+	go vet ./...
+
+race:
+	go test -race ./...
+
+fmt-check:
+	@unformatted=$$(gofmt -l .); if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+
+staticcheck:
+	go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+cover:
+	go test -race -coverpkg=./... -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out | tail -1
+
+# check is what CI runs (minus the coverage gate; see `make cover`).
+check: fmt-check vet staticcheck race
+
 install: build
-	@# Ensure repo dir is in PATH via ~/.zshrc
-	@if ! grep -qF '$(REPO_DIR)' ~/.zshrc 2>/dev/null; then \
-		echo 'export PATH="$(REPO_DIR):$$PATH"' >> ~/.zshrc; \
-		echo "Added $(REPO_DIR) to PATH in ~/.zshrc"; \
-	else \
-		echo "$(REPO_DIR) already in ~/.zshrc PATH"; \
+	@mkdir -p $(PREFIX)/bin
+	@# Atomic replace: a hook or dashboard exec'ing the binary mid-install
+	@# sees either the old or the new file, never a torn one.
+	cp $(BINARY) $(PREFIX)/bin/$(BINARY).new
+	mv -f $(PREFIX)/bin/$(BINARY).new $(PREFIX)/bin/$(BINARY)
+	@echo "installed $$($(PREFIX)/bin/$(BINARY) version) -> $(PREFIX)/bin/$(BINARY)"
+	@# Refresh the skill + hooks from the freshly installed binary.
+	$(PREFIX)/bin/$(BINARY) skill install --force
+	@# Restart the dashboard so it picks up the new binary (if installed).
+	@if launchctl list $(CC_LABEL) >/dev/null 2>&1; then \
+		launchctl kickstart -k gui/$$(id -u)/$(CC_LABEL) && echo "restarted $(CC_LABEL)"; \
 	fi
-	@# Install skill + SessionStart hook
-	./$(BINARY) skill install --force
-	@echo ""
-	@echo "Done. Run 'source ~/.zshrc' or open a new terminal."
-	@echo "Then run 'focusflow init' to create ~/.focusflow/ and the database."
+	@# Warn about any other focusflow earlier on PATH that would shadow this one.
+	@first=$$(command -v $(BINARY) 2>/dev/null); \
+	if [ -n "$$first" ] && [ "$$first" != "$(PREFIX)/bin/$(BINARY)" ]; then \
+		echo "WARNING: $$first shadows $(PREFIX)/bin/$(BINARY) on PATH — remove it or fix PATH"; \
+	fi
+	@case ":$$PATH:" in *":$(PREFIX)/bin:"*) ;; *) echo "NOTE: add $(PREFIX)/bin to PATH in ~/.zshrc";; esac
+	@echo "Run 'focusflow init' once if ~/.focusflow does not exist yet."
 
 uninstall:
 	./$(BINARY) skill uninstall

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"strings"
 )
 
@@ -14,13 +14,13 @@ import (
 
 // ResolveTask resolves a ref to exactly one task by slug.
 // includeArchived controls whether archived rows are eligible.
-func ResolveTask(db *sql.DB, ref string, includeArchived bool) (*flowdb.Task, error) {
+func ResolveTask(db *sql.DB, ref string, includeArchived bool) (*store.Task, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty task ref")
 	}
 
-	t, err := flowdb.GetTask(db, ref)
+	t, err := store.GetTask(db, ref)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no task matching %q", ref)
@@ -34,13 +34,13 @@ func ResolveTask(db *sql.DB, ref string, includeArchived bool) (*flowdb.Task, er
 }
 
 // ResolveProject resolves a ref to exactly one project by slug.
-func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Project, error) {
+func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*store.Project, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty project ref")
 	}
 
-	p, err := flowdb.GetProject(db, ref)
+	p, err := store.GetProject(db, ref)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no project matching %q", ref)
@@ -55,13 +55,13 @@ func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Proje
 
 // ResolvePlaybook resolves a ref to exactly one playbook by slug.
 // includeArchived controls whether archived rows are eligible.
-func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Playbook, error) {
+func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*store.Playbook, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty playbook ref")
 	}
 
-	pb, err := flowdb.GetPlaybook(db, ref)
+	pb, err := store.GetPlaybook(db, ref)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no playbook matching %q", ref)

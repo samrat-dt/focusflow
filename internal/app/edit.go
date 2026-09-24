@@ -3,7 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +23,12 @@ func cmdEdit(args []string) int {
 	}
 	ref := fs.Arg(0)
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -41,7 +41,7 @@ func cmdEdit(args []string) int {
 		return 1
 	}
 
-	root, err := flowRoot()
+	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -58,7 +58,7 @@ func cmdEdit(args []string) int {
 	}
 
 	// Ensure the parent directory exists so the editor doesn't refuse.
-	if err := os.MkdirAll(filepath.Dir(briefPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(briefPath), privDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error: mkdir %s: %v\n", filepath.Dir(briefPath), err)
 		return 1
 	}
@@ -82,7 +82,7 @@ func cmdEdit(args []string) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	var updateErr error
 	switch kind {
 	case "task":

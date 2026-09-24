@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 )
 
@@ -35,12 +35,12 @@ func setArchivedAt(args []string, archive bool) int {
 	}
 	ref := fs.Arg(0)
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -55,7 +55,7 @@ func setArchivedAt(args []string, archive bool) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
+	now := store.NowISO()
 	var table string
 	switch kind {
 	case "task":

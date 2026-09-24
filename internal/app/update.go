@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"strings"
 	"time"
@@ -14,7 +14,7 @@ import (
 // the command exists as a manual escape hatch when the work_dir drifts
 // from what the DB has (e.g. the user moved a repo on disk), and as the
 // single mutation surface for status/priority/assignee/due/waiting/tags
-// (matching live flow's flag-based update model).
+// (one flag-based update model).
 func cmdUpdate(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: update requires 'task' and a ref")
@@ -40,6 +40,7 @@ func cmdUpdateProject(args []string) int {
 	ref := args[0]
 	fs := flagSet("update project")
 	priority := fs.String("priority", "", "high|medium|low")
+	name := fs.String("name", "", "new display name (the slug never changes)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -47,17 +48,21 @@ func cmdUpdateProject(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: --priority must be high|medium|low, got %q\n", *priority)
 		return 2
 	}
-	if *priority == "" {
+	if *name != "" && strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(os.Stderr, "error: --name must not be blank")
+		return 2
+	}
+	if *priority == "" && *name == "" {
 		fmt.Fprintln(os.Stderr, "error: give at least one field to update")
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -74,22 +79,32 @@ func cmdUpdateProject(args []string) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
-	if _, err := db.Exec(`UPDATE projects SET priority=?, updated_at=? WHERE slug=?`, *priority, now, project.Slug); err != nil {
-		fmt.Fprintf(os.Stderr, "error: update priority: %v\n", err)
-		return 1
+	now := store.NowISO()
+	if *priority != "" {
+		if _, err := db.Exec(`UPDATE projects SET priority=?, updated_at=? WHERE slug=?`, *priority, now, project.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update priority: %v\n", err)
+			return 1
+		}
+		fmt.Printf("priority → %s\n", *priority)
 	}
-	fmt.Printf("priority → %s\n", *priority)
+	if *name != "" {
+		if _, err := db.Exec(`UPDATE projects SET name=?, updated_at=? WHERE slug=?`, strings.TrimSpace(*name), now, project.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update name: %v\n", err)
+			return 1
+		}
+		fmt.Printf("name → %s\n", strings.TrimSpace(*name))
+	}
 	return 0
 }
 
 // cmdUpdateTask implements `focusflow update task <ref> [--status ...]
 // [--priority ...] [--assignee ...] [--clear-assignee] [--due-date ...]
 // [--clear-due] [--waiting ...] [--clear-waiting] [--tag ...]
-// [--remove-tag ...] [--clear-tags] [--work-dir <path>] [--mkdir]`. At
+// [--remove-tag ...] [--clear-tags] [--work-dir <path>] [--mkdir]
+// [--name <new>] [--project <slug> | --clear-project]`. At
 // least one field-changing flag must be given. Session binding is owned
 // solely by `focusflow do`/`focusflow do --here` — there is no
-// --session-id flag here, matching live flow's binding invariant.
+// --session-id flag here (a session id belongs to at most one task).
 func cmdUpdateTask(args []string) int {
 	if len(args) < 1 || looksLikeFlag(args[0]) {
 		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
@@ -111,6 +126,9 @@ func cmdUpdateTask(args []string) int {
 	fs.Var(&addTags, "tag", "tag to add (repeatable)")
 	fs.Var(&removeTags, "remove-tag", "tag to remove (repeatable)")
 	clearTags := fs.Bool("clear-tags", false, "remove all tags")
+	name := fs.String("name", "", "new display name (the slug never changes)")
+	project := fs.String("project", "", "move the task into this project (slug)")
+	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -139,6 +157,14 @@ func cmdUpdateTask(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --waiting and --clear-waiting are mutually exclusive")
 		return 2
 	}
+	if *project != "" && *clearProject {
+		fmt.Fprintln(os.Stderr, "error: --project and --clear-project are mutually exclusive")
+		return 2
+	}
+	if *name != "" && strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(os.Stderr, "error: --name must not be blank")
+		return 2
+	}
 
 	var absWorkDir string
 	if *workDir != "" {
@@ -162,17 +188,18 @@ func cmdUpdateTask(args []string) int {
 
 	if *workDir == "" && *status == "" && *priority == "" && *assignee == "" && !*clearAssignee &&
 		*dueDate == "" && !*clearDue && *waiting == "" && !*clearWaiting &&
-		len(addTags) == 0 && len(removeTags) == 0 && !*clearTags {
+		len(addTags) == 0 && len(removeTags) == 0 && !*clearTags &&
+		*name == "" && *project == "" && !*clearProject {
 		fmt.Fprintln(os.Stderr, "error: give at least one field to update")
 		return 2
 	}
 
-	dbPath, err := flowDBPath()
+	dbPath, err := dataDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	db, err := flowdb.OpenDB(dbPath)
+	db, err := store.OpenDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
 		return 1
@@ -202,7 +229,42 @@ func cmdUpdateTask(args []string) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
+	var targetProject *store.Project
+	if *project != "" {
+		p, err := ResolveProject(db, *project, false)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				fmt.Fprintf(os.Stderr, "error: project %q not found\n", *project)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		targetProject = p
+	}
+
+	now := store.NowISO()
+	if *name != "" {
+		if _, err := db.Exec(`UPDATE tasks SET name=?, updated_at=? WHERE slug=?`, strings.TrimSpace(*name), now, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update name: %v\n", err)
+			return 1
+		}
+		fmt.Printf("name → %s\n", strings.TrimSpace(*name))
+	}
+	if targetProject != nil {
+		if _, err := db.Exec(`UPDATE tasks SET project_slug=?, updated_at=? WHERE slug=?`, targetProject.Slug, now, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update project: %v\n", err)
+			return 1
+		}
+		fmt.Printf("project → %s\n", targetProject.Slug)
+	}
+	if *clearProject {
+		if _, err := db.Exec(`UPDATE tasks SET project_slug=NULL, updated_at=? WHERE slug=?`, now, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: clear project: %v\n", err)
+			return 1
+		}
+		fmt.Println("project cleared (floating)")
+	}
 	if absWorkDir != "" {
 		if _, err := db.Exec(`UPDATE tasks SET work_dir=?, updated_at=? WHERE slug=?`, absWorkDir, now, task.Slug); err != nil {
 			fmt.Fprintf(os.Stderr, "error: update work_dir: %v\n", err)
@@ -272,19 +334,19 @@ func cmdUpdateTask(args []string) int {
 		fmt.Println("waiting_on cleared")
 	}
 	for _, tag := range addTags {
-		if err := flowdb.AddTag(db, task.Slug, tag); err != nil {
+		if err := store.AddTag(db, task.Slug, tag); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 	for _, tag := range removeTags {
-		if err := flowdb.RemoveTag(db, task.Slug, tag); err != nil {
+		if err := store.RemoveTag(db, task.Slug, tag); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
 	if *clearTags {
-		if err := flowdb.ClearTags(db, task.Slug); err != nil {
+		if err := store.ClearTags(db, task.Slug); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}

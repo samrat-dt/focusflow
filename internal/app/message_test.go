@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 )
 
 // bindSession sets CLAUDE_CODE_SESSION_ID and binds it to slug via
@@ -104,7 +104,7 @@ func TestParseMessageArgs(t *testing.T) {
 // control-center makes: `message user/<slug> "<text>"` from an unbound
 // (dispatch) context lands in that task's own mailbox, not the human's.
 func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 
@@ -117,8 +117,8 @@ func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
 		t.Errorf("expected output to mention target, got %q", out)
 	}
 
-	db := openFlowDB(t)
-	msgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{TaskSlug: "worker"}, true)
+	db := openTestDB(t)
+	msgs, err := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "worker"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
 	}
 
 	// The human's own mailbox must be untouched by this send.
-	humanMsgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{Assignee: "user"}, true)
+	humanMsgs, err := store.ListBusMessages(db, store.MailboxFilter{Assignee: "user"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages(user): %v", err)
 	}
@@ -153,7 +153,7 @@ func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
 // user "<reply>"` lands in the human's aggregate mailbox tagged with its
 // own task slug, matching how control-center's poller attributes replies.
 func TestCmdMessage_TaskRepliesToUser(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	bindSession(t, "worker", "11111111-1111-4111-8111-111111111111")
 
@@ -162,8 +162,8 @@ func TestCmdMessage_TaskRepliesToUser(t *testing.T) {
 	}
 
 	unbindSession(t)
-	db := openFlowDB(t)
-	msgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{Assignee: "user"}, true)
+	db := openTestDB(t)
+	msgs, err := store.ListBusMessages(db, store.MailboxFilter{Assignee: "user"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestCmdMessage_TaskRepliesToUser(t *testing.T) {
 }
 
 func TestCmdMessage_RejectsSelfAddress(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 
 	t.Run("bound task messaging its own mailbox", func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestCmdMessage_RejectsSelfAddress(t *testing.T) {
 }
 
 func TestCmdMessage_UnknownTaskErrors(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	unbindSession(t)
 	if rc := cmdMessage([]string{"user/does-not-exist", "hi"}); rc == 0 {
 		t.Error("expected error for unknown task slug, got rc=0")
@@ -207,7 +207,7 @@ func TestCmdMessage_UnknownTaskErrors(t *testing.T) {
 }
 
 func TestCmdMessage_UnknownReplyToErrors(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 	if rc := cmdMessage([]string{"user/worker", "hi", "--reply-to", "deadbeef"}); rc == 0 {
@@ -216,7 +216,7 @@ func TestCmdMessage_UnknownReplyToErrors(t *testing.T) {
 }
 
 func TestCmdMessage_ReplyToChainsCorrectly(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	unbindSession(t)
 
@@ -231,8 +231,8 @@ func TestCmdMessage_ReplyToChainsCorrectly(t *testing.T) {
 		t.Fatalf("cmdMessage rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	msgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{TaskSlug: "worker"}, true)
+	db := openTestDB(t)
+	msgs, err := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "worker"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -246,15 +246,15 @@ func TestCmdMessage_ReplyToChainsCorrectly(t *testing.T) {
 }
 
 func TestCmdBroadcast_LandsInHumanMailbox(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	unbindSession(t)
 
 	if rc := cmdBroadcast([]string{"heads up, deploying soon"}); rc != 0 {
 		t.Fatalf("cmdBroadcast rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	msgs, err := flowdb.ListBusMessages(db, flowdb.MailboxFilter{Assignee: "user"}, true)
+	db := openTestDB(t)
+	msgs, err := store.ListBusMessages(db, store.MailboxFilter{Assignee: "user"}, true)
 	if err != nil {
 		t.Fatalf("ListBusMessages: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestCmdBroadcast_LandsInHumanMailbox(t *testing.T) {
 }
 
 func TestCmdBroadcast_RequiresNonEmptyBody(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	unbindSession(t)
 	if rc := cmdBroadcast([]string{}); rc == 0 {
 		t.Error("expected error for missing body, got rc=0")
@@ -293,7 +293,7 @@ func extractBracketedID(t *testing.T, out string) string {
 // control-center's lib/inbox.js parseRow expects: id, body, created_at,
 // from.task_slug (nullable), reply_to (nullable), urgent, mail.
 func TestControlCenterInboxJSONShape(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	seedTask(t, "worker")
 	bindSession(t, "worker", "33333333-3333-4333-8333-333333333333")
 	if rc := cmdMessage([]string{"user", "the reply", "--urgent"}); rc != 0 {
@@ -336,10 +336,10 @@ func TestControlCenterInboxJSONShape(t *testing.T) {
 }
 
 func TestResolveCurrentTaskSlug_FallsBackToEnvVar(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	unbindSession(t)
 	t.Setenv("FOCUSFLOW_TASK", "whatever")
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	if got := resolveCurrentTaskSlug(db); got != "whatever" {
 		t.Errorf("resolveCurrentTaskSlug() = %q, want %q", got, "whatever")
 	}

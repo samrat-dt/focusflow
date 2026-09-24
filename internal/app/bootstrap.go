@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -42,4 +43,14 @@ var newUUID = func() (string, error) {
 func EncodeCwdForClaude(cwd string) string {
 	r := strings.NewReplacer("/", "-", ".", "-", "_", "-")
 	return r.Replace(cwd)
+}
+
+// currentHarnessSessionID returns the active harness's session id (Claude
+// Code's, or Codex's thread id), or "" outside any harness session. It is
+// the single source of truth for "which task is this session bound to".
+func currentHarnessSessionID() string {
+	if id := os.Getenv("CLAUDE_CODE_SESSION_ID"); id != "" {
+		return id
+	}
+	return os.Getenv("CODEX_THREAD_ID")
 }

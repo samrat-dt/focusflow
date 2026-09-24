@@ -1,4 +1,4 @@
-package flowdb
+package store
 
 import (
 	"database/sql"

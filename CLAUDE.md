@@ -7,11 +7,11 @@ A Go CLI (`focusflow`) that manages personal tasks and bootstraps per-task Claud
 ## Build and test
 
 ```bash
-# Build (produces ./focusflow in the repo dir, which is on PATH)
+# Build (produces ./focusflow in the repo dir; `make install` puts the one installed copy in ~/.local/bin)
 make build
 # or: go build -o focusflow .
 
-# Full install (build + PATH + init + skill + hook)
+# Install: copies the binary to ~/.local/bin (single copy), refreshes skill + hooks, restarts control-center
 make install
 
 # Run all tests (fast — no network, no real iTerm/Claude)
@@ -30,52 +30,40 @@ Tests use `$FOCUSFLOW_ROOT` pointed at a temp directory and override `$HOME` so 
 focusflow/
 ├── main.go                          # thin entry point — calls app.Run()
 ├── internal/
-│   ├── app/                         # CLI commands and dispatch
+│   ├── app/                         # CLI commands and dispatch (one file per subcommand)
 │   │   ├── app.go                   # Run(), printUsage()
 │   │   ├── helpers.go               # flagSet()
-│   │   ├── add.go                   # focusflow add project|task
-│   │   ├── archive.go               # focusflow archive|unarchive
-│   │   ├── do.go                    # focusflow do — session spawner
-│   │   ├── done.go                  # focusflow done
-│   │   ├── due.go                   # focusflow due
-│   │   ├── edit.go                  # focusflow edit
-│   │   ├── hook.go                  # focusflow hook session-start
-│   │   ├── init.go                  # focusflow init, flowRoot(), kbSeeds()
-│   │   ├── list.go                  # focusflow list tasks|projects
-│   │   ├── mirror.go                # flow -> focusflow session-start mirror (read-only, one-way)
-│   │   ├── priority.go              # focusflow priority
-│   │   ├── show.go                  # focusflow show task|project
-│   │   ├── skill.go                 # focusflow skill install|uninstall|update
-│   │   ├── transcript.go            # focusflow transcript — session jsonl reader
-│   │   ├── waiting.go               # focusflow waiting
-│   │   ├── workdir.go               # focusflow workdir
-│   │   ├── bootstrap.go             # UUID gen, session file scanning
-│   │   ├── resolve.go               # task/project slug resolution
-│   │   ├── slug.go                  # name-to-slug conversion
+│   │   ├── add.go archive.go edit.go done.go show.go list.go update.go
+│   │   ├── do.go run.go             # session spawner; playbook runs
+│   │   ├── hook.go                  # session-start / user-prompt-submit / stop hooks
+│   │   ├── message.go inbox.go watch.go   # message bus
+│   │   ├── stats.go transcript.go workdir.go playbook.go
+│   │   ├── backup.go                # focusflow backup / restore (VACUUM INTO snapshot)
+│   │   ├── doctor.go                # focusflow doctor [--fix]
+│   │   ├── perms.go                 # 0700/0600 hardening of ~/.focusflow
+│   │   ├── skill.go                 # skill + hooks install|uninstall|update
+│   │   ├── version.go init.go liveness.go bootstrap.go resolve.go slug.go dateparse.go aux.go
 │   │   ├── skill/SKILL.md           # embedded skill (//go:embed)
 │   │   └── *_test.go
-│   ├── flowdb/                      # SQLite data layer
-│   │   ├── db.go                    # schema, models, CRUD queries
-│   │   └── db_test.go
-│   ├── iterm/                       # iTerm2 tab spawning
-│   │   └── iterm.go
-│   └── realflow/                    # read-only reader for real flow's ~/.flow/flow.db
-│       ├── reader.go                # LookupBySessionID — mode=ro, never writes
-│       └── reader_test.go
-├── Makefile
+│   ├── store/                       # SQLite data layer
+│   │   ├── db.go                    # schema, models, CRUD, OpenDB, versioned migrations
+│   │   ├── messages.go bus_extras.go# bus queries, watches, stats, nudges
+│   │   └── *_test.go
+│   └── iterm/                       # terminal tab spawning (iTerm2, Terminal.app)
+│       └── iterm.go
+├── Makefile                         # build / install / test / check
 ├── README.md
 ├── CLAUDE.md
-├── .gitignore
+├── .github/workflows/
 ├── go.mod
 └── go.sum
 ```
 
 ## Package responsibilities
 
-- **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `iterm`.
-- **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
-- **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` var for test mocking.
-- **`internal/realflow`** — read-only reader for real flow's `~/.flow/flow.db` (honors `$FLOW_ROOT`). Every connection is opened `mode=ro`; nothing in this package ever writes. Used only by `internal/app/mirror.go`.
+- **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `store` and `iterm`.
+- **`internal/store`** (`bus_extras.go` holds the watch/stats/nudge queries; `OpenDB` is the single opener — WAL, 30s busy timeout, foreign keys, versioned migrations via `PRAGMA user_version`) — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
+- **`internal/iterm`** — osascript-based terminal spawning (iTerm2 default, Terminal.app via `FOCUSFLOW_TERM`). Exposes `iterm.Runner` var for test mocking.
 
 ## Conventions
 
@@ -98,11 +86,13 @@ focusflow/
   projects/<slug>/updates/*.md
   tasks/<slug>/brief.md
   tasks/<slug>/updates/*.md
+  backups/focusflow-backup-*.tar.gz   (focusflow backup)
 ```
+Everything under `~/.focusflow` is private (dirs 0700, files 0600); `ensureRootPrivate` re-applies this at startup.
 
 ## Things to watch out for
 
 - `hookCommand` in `internal/app/skill.go` is the exact string matched in `~/.claude/settings.json`. Changing it orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.
-- `mirror.go`'s `mirrorFromFlow` runs on every `focusflow hook session-start`, regardless of `$FOCUSFLOW_TASK`. It reads `$FLOW_ROOT` (or `~/.flow`) — any test that exercises the hook path must set `FLOW_ROOT` to a throwaway dir (and clear `CLAUDE_CODE_SESSION_ID`/`CODEX_THREAD_ID`) or it will read/write real state on a dev machine. See `isolateHookEnv` / `mirrorTestEnv` in `internal/app/*_test.go`. Rows it writes are tagged `source='flow-mirror'` in both `projects` and `tasks`; a `source='native'` row is never touched — see `flowdb.UpsertMirroredProject`/`UpsertMirroredTask`.
+- Hook tests must call `isolateHookEnv` (throwaway `$HOME`/`$FOCUSFLOW_ROOT`, cleared `CLAUDE_CODE_SESSION_ID`/`CODEX_THREAD_ID`) so nothing touches real state on a dev machine. `initTempRoot` also clears `FOCUSFLOW_TASK`/`FOCUSFLOW_PROJECT` so tests pass when run inside a live focusflow session.

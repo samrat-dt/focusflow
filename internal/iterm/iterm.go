@@ -1,12 +1,37 @@
-// Package iterm provides iTerm2 tab spawning via osascript.
+// Package iterm spawns terminal tabs/windows via osascript. Despite the
+// package name (kept for import stability) it supports iTerm2 and
+// Terminal.app; see Backend.
 package iterm
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
 )
+
+// Backend names the terminal application a session is spawned in.
+type Backend string
+
+const (
+	ITerm2      Backend = "iTerm2"
+	TerminalApp Backend = "Terminal.app"
+)
+
+// SelectBackend resolves which terminal to use from $FOCUSFLOW_TERM,
+// defaulting to iTerm2. Unknown values are an error
+// rather than a silent default, so a typo can't open the wrong app.
+func SelectBackend() (Backend, error) {
+	v := os.Getenv("FOCUSFLOW_TERM")
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "iterm", "iterm2", "iterm.app":
+		return ITerm2, nil
+	case "terminal", "terminal.app", "apple_terminal":
+		return TerminalApp, nil
+	}
+	return "", fmt.Errorf("unsupported terminal %q (FOCUSFLOW_TERM must be iTerm2 or Terminal.app)", v)
+}
 
 // Runner is the function used to execute osascript.
 // Tests override this to capture arguments without invoking osascript.
@@ -47,18 +72,45 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	safeCommand := escapeAppleScriptString(fullCommand)
 	safeTitle := escapeAppleScriptString(title)
 
-	script := fmt.Sprintf(`tell application "iTerm2"
-  tell current window
-    set newTab to (create tab with default profile)
-    tell current session of newTab
+	backend, err := SelectBackend()
+	if err != nil {
+		return err
+	}
+	return Runner([]string{"-e", spawnScript(backend, safeTitle, safeCommand)})
+}
+
+// spawnScript renders the AppleScript for a backend. iTerm2: reuse the
+// front window when one exists, otherwise create one — `current window`
+// is missing when the app has no windows (e.g. a launchd-started
+// control-center), which used to fail the spawn outright. Terminal.app:
+// `do script` opens a new window running the command, then it is titled.
+func spawnScript(b Backend, safeTitle, safeCommand string) string {
+	if b == TerminalApp {
+		return fmt.Sprintf(`tell application "Terminal"
+  set newTab to do script "%s"
+  set custom title of newTab to "%s"
+  activate
+end tell
+`, safeCommand, safeTitle)
+	}
+	return fmt.Sprintf(`tell application "iTerm2"
+  if (count of windows) = 0 then
+    set newWindow to (create window with default profile)
+    tell current session of newWindow
       set name to "%s"
       write text "%s"
     end tell
-  end tell
+  else
+    tell current window
+      set newTab to (create tab with default profile)
+      tell current session of newTab
+        set name to "%s"
+        write text "%s"
+      end tell
+    end tell
+  end if
 end tell
-`, safeTitle, safeCommand)
-
-	return Runner([]string{"-e", script})
+`, safeTitle, safeCommand, safeTitle, safeCommand)
 }
 
 // ShellQuote wraps s in single quotes with proper escaping.

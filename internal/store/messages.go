@@ -1,4 +1,4 @@
-package flowdb
+package store
 
 import (
 	"database/sql"
@@ -65,8 +65,7 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 
 // InsertBusMessageIfAbsent inserts a historical message row exactly as
 // given — unlike InsertBusMessage, it does not stamp CreatedAt or force
-// Mail to 'unread', since the caller (the one-time flow->focusflow
-// message migration) is replaying a row that already happened in the
+// Mail to 'unread', since the caller (a bulk import/restore) is replaying a row that already happened in the
 // past with its own timestamps and read state. INSERT OR IGNORE makes
 // re-running the migration safe: a message id already present is left
 // untouched and reported as not-inserted, never duplicated or errored.
@@ -182,6 +181,17 @@ func ListBusMessages(db *sql.DB, f MailboxFilter, all bool) ([]*BusMessage, erro
 // mailbox and, unless keepUnread is true, marks it read in the same
 // transaction. Returns (nil, nil) if the mailbox has no unread message.
 func PopOldestUnread(db *sql.DB, f MailboxFilter, keepUnread bool) (*BusMessage, error) {
+	// Cheap read first: `inbox pop --wait` polls this every 500ms, and an
+	// empty poll must not take the write lock (BEGIN IMMEDIATE) each time.
+	var probeArgs []any
+	var any1 int
+	err := db.QueryRow("SELECT 1 FROM bus_messages WHERE "+f.whereClause(&probeArgs)+" AND mail='unread' LIMIT 1", probeArgs...).Scan(&any1)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("probe unread: %w", err)
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)

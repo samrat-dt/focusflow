@@ -2,33 +2,33 @@ package app
 
 import (
 	"database/sql"
-	"focusflow/internal/flowdb"
+	"focusflow/internal/store"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
 
-// setupFlowRoot sets up a tempdir FOCUSFLOW_ROOT and runs cmdInit to create the
+// setupRoot sets up a tempdir FOCUSFLOW_ROOT and runs cmdInit to create the
 // DB + tree. Returns the root path. Uses the init-test helper
-// `initTempFlowRoot` which also redirects $HOME so the skill install lands
+// `initTempRoot` which also redirects $HOME so the skill install lands
 // inside the test sandbox.
-func setupFlowRoot(t *testing.T) string {
+func setupRoot(t *testing.T) string {
 	t.Helper()
-	root := initTempFlowRoot(t)
+	root := initTempRoot(t)
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
 	return root
 }
 
-func openFlowDB(t *testing.T) *sql.DB {
+func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path, err := flowDBPath()
+	path, err := dataDBPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := flowdb.OpenDB(path)
+	db, err := store.OpenDB(path)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)
 	}
@@ -39,7 +39,7 @@ func openFlowDB(t *testing.T) *sql.DB {
 // ---------- add project ----------
 
 func TestCmdAddProjectHappyPath(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 	wd := t.TempDir()
 
 	rc := cmdAdd([]string{"project", "Auth Service", "--work-dir", wd, "--priority", "high"})
@@ -47,8 +47,8 @@ func TestCmdAddProjectHappyPath(t *testing.T) {
 		t.Fatalf("rc=%d", rc)
 	}
 
-	db := openFlowDB(t)
-	p, err := flowdb.GetProject(db, "auth-service")
+	db := openTestDB(t)
+	p, err := store.GetProject(db, "auth-service")
 	if err != nil {
 		t.Fatalf("GetProject: %v", err)
 	}
@@ -75,20 +75,20 @@ func TestCmdAddProjectHappyPath(t *testing.T) {
 	}
 
 	// workdir auto-registered.
-	if _, err := flowdb.GetWorkdir(db, wd); err != nil {
+	if _, err := store.GetWorkdir(db, wd); err != nil {
 		t.Errorf("workdir not auto-registered: %v", err)
 	}
 }
 
 func TestCmdAddProjectRequiresWorkDir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"project", "NoWorkDir"}); rc == 0 {
 		t.Errorf("expected non-zero rc when --work-dir is missing")
 	}
 }
 
 func TestCmdAddProjectMkdirCreatesMissing(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "new-proj")
 
@@ -102,7 +102,7 @@ func TestCmdAddProjectMkdirCreatesMissing(t *testing.T) {
 }
 
 func TestCmdAddProjectMissingWorkDirFailsWithoutMkdir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "not-there")
 	if rc := cmdAdd([]string{"project", "X", "--work-dir", missing}); rc == 0 {
@@ -111,7 +111,7 @@ func TestCmdAddProjectMissingWorkDirFailsWithoutMkdir(t *testing.T) {
 }
 
 func TestCmdAddProjectCollisionAvoidance(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd1 := t.TempDir()
 	wd2 := t.TempDir()
 
@@ -121,17 +121,17 @@ func TestCmdAddProjectCollisionAvoidance(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "Same Name", "--work-dir", wd2}); rc != 0 {
 		t.Fatalf("second rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	if _, err := flowdb.GetProject(db, "same-name"); err != nil {
+	db := openTestDB(t)
+	if _, err := store.GetProject(db, "same-name"); err != nil {
 		t.Errorf("same-name missing: %v", err)
 	}
-	if _, err := flowdb.GetProject(db, "same-name-2"); err != nil {
+	if _, err := store.GetProject(db, "same-name-2"); err != nil {
 		t.Errorf("same-name-2 missing: %v", err)
 	}
 }
 
 func TestCmdAddProjectBadPriority(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 	if rc := cmdAdd([]string{"project", "X", "--work-dir", wd, "--priority", "urgent"}); rc == 0 {
 		t.Errorf("expected rc!=0 for bad priority")
@@ -141,50 +141,50 @@ func TestCmdAddProjectBadPriority(t *testing.T) {
 // ---------- add task ----------
 
 func TestCmdAddTaskRejectsLeadingDashAsName(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdAdd([]string{"task", "--help"})
 	if rc != 2 {
 		t.Errorf("add task --help: rc=%d, want 2 (usage error, not a created task)", rc)
 	}
-	db := openFlowDB(t)
-	if _, err := flowdb.GetTask(db, "help"); err == nil {
+	db := openTestDB(t)
+	if _, err := store.GetTask(db, "help"); err == nil {
 		t.Error("add task --help must not create a task named 'help'/'--help'")
 	}
 }
 
 func TestCmdAddProjectRejectsLeadingDashAsName(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdAdd([]string{"project", "--help", "--work-dir", t.TempDir()})
 	if rc != 2 {
 		t.Errorf("add project --help: rc=%d, want 2 (usage error, not a created project)", rc)
 	}
-	db := openFlowDB(t)
-	if _, err := flowdb.GetProject(db, "help"); err == nil {
+	db := openTestDB(t)
+	if _, err := store.GetProject(db, "help"); err == nil {
 		t.Error("add project --help must not create a project named 'help'/'--help'")
 	}
 }
 
 func TestCmdAddPlaybookRejectsLeadingDashAsName(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	rc := cmdAdd([]string{"playbook", "--help", "--work-dir", t.TempDir()})
 	if rc != 2 {
 		t.Errorf("add playbook --help: rc=%d, want 2 (usage error, not a created playbook)", rc)
 	}
-	db := openFlowDB(t)
-	if _, err := flowdb.GetPlaybook(db, "help"); err == nil {
+	db := openTestDB(t)
+	if _, err := store.GetPlaybook(db, "help"); err == nil {
 		t.Error("add playbook --help must not create a playbook named 'help'/'--help'")
 	}
 }
 
 func TestCmdAddTaskFloating(t *testing.T) {
-	root := setupFlowRoot(t)
+	root := setupRoot(t)
 
 	rc := cmdAdd([]string{"task", "Fix bug"})
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "fix-bug")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "fix-bug")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -208,21 +208,21 @@ func TestCmdAddTaskFloating(t *testing.T) {
 }
 
 func TestCmdAddTaskAssigneeAndTags(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 
 	rc := cmdAdd([]string{"task", "Fix login bug", "--slug", "fix-login", "--assignee", "sam", "--tag", "urgent", "--tag", "frontend"})
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "fix-login")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "fix-login")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
 	if !task.Assignee.Valid || task.Assignee.String != "sam" {
 		t.Errorf("Assignee = %+v, want sam", task.Assignee)
 	}
-	tags, err := flowdb.ListTagsForTask(db, "fix-login")
+	tags, err := store.ListTagsForTask(db, "fix-login")
 	if err != nil {
 		t.Fatalf("ListTagsForTask: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestCmdAddTaskAssigneeAndTags(t *testing.T) {
 }
 
 func TestCmdAddTaskInheritsProjectWorkDir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	wd := t.TempDir()
 
 	if rc := cmdAdd([]string{"project", "Parent", "--work-dir", wd}); rc != 0 {
@@ -241,8 +241,8 @@ func TestCmdAddTaskInheritsProjectWorkDir(t *testing.T) {
 	if rc := cmdAdd([]string{"task", "Child Task", "--project", "parent"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "child-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "child-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestCmdAddTaskInheritsProjectWorkDir(t *testing.T) {
 }
 
 func TestCmdAddTaskOverridesProjectWorkDir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	projWD := t.TempDir()
 	overrideWD := t.TempDir()
 
@@ -265,8 +265,8 @@ func TestCmdAddTaskOverridesProjectWorkDir(t *testing.T) {
 	if rc := cmdAdd([]string{"task", "Child", "--project", "p", "--work-dir", overrideWD}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "child")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "child")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,29 +276,29 @@ func TestCmdAddTaskOverridesProjectWorkDir(t *testing.T) {
 }
 
 func TestCmdAddTaskInvalidProject(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"task", "X", "--project", "nope"}); rc == 0 {
 		t.Error("expected rc!=0 for unknown project")
 	}
 }
 
 func TestCmdAddTaskCollisionAvoidance(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	for i := 0; i < 3; i++ {
 		if rc := cmdAdd([]string{"task", "Dup Task"}); rc != 0 {
 			t.Fatalf("add task iter %d rc=%d", i, rc)
 		}
 	}
-	db := openFlowDB(t)
+	db := openTestDB(t)
 	for _, s := range []string{"dup-task", "dup-task-2", "dup-task-3"} {
-		if _, err := flowdb.GetTask(db, s); err != nil {
+		if _, err := store.GetTask(db, s); err != nil {
 			t.Errorf("slug %q missing: %v", s, err)
 		}
 	}
 }
 
 func TestCmdAddTaskWorkDirMkdir(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "fresh-subdir")
 	if rc := cmdAdd([]string{"task", "Task", "--work-dir", missing, "--mkdir"}); rc != 0 {
@@ -310,7 +310,7 @@ func TestCmdAddTaskWorkDirMkdir(t *testing.T) {
 }
 
 func TestCmdAddUnknownSubcommand(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"bogus"}); rc != 2 {
 		t.Errorf("rc=%d, want 2", rc)
 	}
@@ -320,12 +320,12 @@ func TestCmdAddUnknownSubcommand(t *testing.T) {
 }
 
 func TestCmdAddTaskWithDueDate(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"task", "Due Task", "--due", "2026-06-01"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "due-task")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "due-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,19 +339,19 @@ func TestCmdAddTaskWithDueDate(t *testing.T) {
 }
 
 func TestCmdAddTaskWithBadDueDate(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"task", "Bad Due", "--due", "garble"}); rc != 2 {
 		t.Errorf("rc=%d, want 2", rc)
 	}
 }
 
 func TestCmdAddTaskWithoutDueDate(t *testing.T) {
-	setupFlowRoot(t)
+	setupRoot(t)
 	if rc := cmdAdd([]string{"task", "No Due"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	db := openFlowDB(t)
-	task, err := flowdb.GetTask(db, "no-due")
+	db := openTestDB(t)
+	task, err := store.GetTask(db, "no-due")
 	if err != nil {
 		t.Fatal(err)
 	}
