@@ -18,17 +18,16 @@ func stubITerm(t *testing.T) (*int64, func() string) {
 	var count int64
 	var mu sync.Mutex
 	var lastScript string
-	old := iterm.Runner
-	iterm.Runner = func(args []string) error {
+	restore := iterm.Stub(func(args []string) (string, error) {
 		atomic.AddInt64(&count, 1)
 		mu.Lock()
 		if len(args) >= 2 {
 			lastScript = args[1]
 		}
 		mu.Unlock()
-		return nil
-	}
-	t.Cleanup(func() { iterm.Runner = old })
+		return "stub-tab-ref", nil
+	})
+	t.Cleanup(restore)
 	return &count, func() string {
 		mu.Lock()
 		defer mu.Unlock()

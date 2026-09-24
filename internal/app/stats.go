@@ -138,7 +138,10 @@ type statsReport struct {
 	Since        string
 	Project      string
 	Backlog      int
+	Next         int
 	InProgress   int
+	Paused       int
+	Review       int
 	Done         int
 	DoneInWindow int
 	Sessions     int
@@ -152,6 +155,7 @@ func cmdStats(args []string) int {
 	since := fs.String("since", "all", "window: all|<N>d|YYYY-MM-DD")
 	project := fs.String("project", "", "limit to one project slug")
 	card := fs.Bool("card", false, "also write a shareable HTML stats card")
+	asJSON := fs.Bool("json", false, "machine-readable output (used by the dashboard)")
 	out := fs.String("out", "", "card output path (default <root>/stats-card.html)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -212,6 +216,12 @@ func cmdStats(args []string) int {
 		switch t.Status {
 		case "backlog":
 			rep.Backlog++
+		case "next":
+			rep.Next++
+		case "paused":
+			rep.Paused++
+		case "review":
+			rep.Review++
 		case "in-progress":
 			rep.InProgress++
 		case "done":
@@ -271,6 +281,12 @@ func cmdStats(args []string) int {
 		rep.Bus = bs
 	}
 
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(rep.toJSON())
+		return 0
+	}
 	fmt.Print(renderStatsText(rep))
 	if *card {
 		path := *out
@@ -306,7 +322,8 @@ func renderStatsText(r statsReport) string {
 		title += " — project " + r.Project
 	}
 	fmt.Fprintf(&b, "%s (since %s)\n\n", title, r.Since)
-	fmt.Fprintf(&b, "tasks        : %d backlog, %d in-progress, %d done (%d done in window)\n", r.Backlog, r.InProgress, r.Done, r.DoneInWindow)
+	fmt.Fprintf(&b, "tasks        : %d backlog, %d next, %d in-progress, %d paused, %d review, %d done (%d done in window)\n",
+		r.Backlog, r.Next, r.InProgress, r.Paused, r.Review, r.Done, r.DoneInWindow)
 	fmt.Fprintf(&b, "sessions     : %d\n", r.Sessions)
 	fmt.Fprintf(&b, "tokens       : %d in, %d out, %d cache-write, %d cache-read\n", r.Usage.Input, r.Usage.Output, r.Usage.CacheCreation, r.Usage.CacheRead)
 	if len(r.Projects) > 0 {
@@ -337,8 +354,60 @@ func renderStatsCard(r statsReport) string {
 .card{background:#1b1b1f;border-radius:16px;padding:28px 32px;min-width:420px}h1{font-size:18px;margin:0 0 4px}p{color:#999;margin:0 0 20px}
 .g{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.c b{display:block;font-size:26px}.c span{color:#999;font-size:12px}</style></head>
 <body><div class="card"><h1>%s</h1><p>since %s</p><div class="g">`, html.EscapeString(title), html.EscapeString(r.Since))
-	b.WriteString(cell("backlog", r.Backlog) + cell("in progress", r.InProgress) + cell("done", r.Done))
+	b.WriteString(cell("backlog", r.Backlog) + cell("in progress", r.InProgress) + cell("review", r.Review))
+	b.WriteString(cell("done", r.Done))
 	b.WriteString(cell("done in window", r.DoneInWindow) + cell("sessions", r.Sessions) + cell("output tokens", r.Usage.Output))
 	b.WriteString(`</div></div></body></html>`)
 	return b.String()
+}
+
+// statsJSON is the stable machine-readable shape of `stats --json`.
+type statsJSON struct {
+	Since        string         `json:"since"`
+	Project      string         `json:"project,omitempty"`
+	Tasks        map[string]int `json:"tasks"`
+	Done         int            `json:"done"`
+	DoneInWindow int            `json:"done_in_window"`
+	Sessions     int            `json:"sessions"`
+	Tokens       struct {
+		Input         int64 `json:"input"`
+		Output        int64 `json:"output"`
+		CacheCreation int64 `json:"cache_creation"`
+		CacheRead     int64 `json:"cache_read"`
+	} `json:"tokens"`
+	Projects []statsProjectJSON `json:"projects"`
+	Bus      *struct {
+		Answered          int     `json:"answered"`
+		Pending           int     `json:"pending"`
+		Broadcasts        int     `json:"broadcasts"`
+		MedianWaitSeconds float64 `json:"median_wait_seconds"`
+	} `json:"bus,omitempty"`
+}
+
+type statsProjectJSON struct {
+	Slug     string `json:"slug"`
+	Tasks    int    `json:"tasks"`
+	Done     int    `json:"done"`
+	InFlight int    `json:"in_flight"`
+}
+
+func (r statsReport) toJSON() statsJSON {
+	var j statsJSON
+	j.Since, j.Project = r.Since, r.Project
+	j.Tasks = map[string]int{"backlog": r.Backlog, "next": r.Next, "in-progress": r.InProgress, "paused": r.Paused, "review": r.Review, "done": r.Done}
+	j.Done, j.DoneInWindow, j.Sessions = r.Done, r.DoneInWindow, r.Sessions
+	j.Tokens.Input, j.Tokens.Output, j.Tokens.CacheCreation, j.Tokens.CacheRead = r.Usage.Input, r.Usage.Output, r.Usage.CacheCreation, r.Usage.CacheRead
+	j.Projects = []statsProjectJSON{}
+	for _, p := range r.Projects {
+		j.Projects = append(j.Projects, statsProjectJSON{p.Slug, p.Tasks, p.Done, p.InFlight})
+	}
+	if r.Bus != nil {
+		j.Bus = &struct {
+			Answered          int     `json:"answered"`
+			Pending           int     `json:"pending"`
+			Broadcasts        int     `json:"broadcasts"`
+			MedianWaitSeconds float64 `json:"median_wait_seconds"`
+		}{r.Bus.Answered, r.Bus.Pending, r.Bus.Broadcasts, r.Bus.Median.Seconds()}
+	}
+	return j
 }

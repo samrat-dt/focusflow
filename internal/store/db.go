@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -163,6 +164,9 @@ type Project struct {
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
+	// AgentTaskSlug is the hidden kind='project_agent' task that holds the
+	// project's one permanent session (see `focusflow project agent`).
+	AgentTaskSlug sql.NullString
 }
 
 // Task mirrors the tasks table. ProjectSlug is nullable for floating tasks.
@@ -192,6 +196,7 @@ type Task struct {
 	CreatedAt          string
 	UpdatedAt          string
 	ArchivedAt         sql.NullString
+	TerminalRef        sql.NullString // terminal tab/session this task was last opened in
 }
 
 // Workdir mirrors the workdirs convenience registry.
@@ -214,6 +219,7 @@ type TaskFilter struct {
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool     // hide status=done; ignored if Status is set explicitly
+	ExcludeAgents   bool     // hide hidden project-agent (coordinator) tasks when Kind is ""
 	Tags            []string // AND semantics: a task must carry every listed tag
 }
 
@@ -266,13 +272,17 @@ func dsnFor(path string) string {
 // open. From here on, a schema change MUST be a new entry in
 // versionedMigrations (never an edit to schemaDDL alone — an already-
 // stamped database would skip it) and bump SchemaVersion.
-const SchemaVersion = 1
+const SchemaVersion = 3
 
-// versionedMigrations[i] upgrades a database from version i+1 to i+2
-// (the baseline, version 1, is applied by applyBaseline). Each runs in
-// its own transaction together with its user_version bump, so a crash
-// can't leave a half-applied step marked done.
-var versionedMigrations = []func(tx *sql.Tx) error{}
+// versionedMigrations[i] upgrades a database from version i+1 to i+2 (the
+// baseline, version 1, is applied by ensureSchema). Each step runs on one
+// dedicated connection and manages its own transaction, because some
+// (table rebuilds) must run with foreign_keys OFF, which SQLite ignores
+// inside a transaction. The step and its user_version bump commit together.
+var versionedMigrations = []func(ctx context.Context, conn *sql.Conn) error{
+	migrateV2Statuses,
+	migrateV3ProjectAgentsAndTerminal,
+}
 
 // ErrSchemaTooNew is returned when the database was written by a newer
 // focusflow than this binary; opening it read-write could corrupt data.
@@ -321,22 +331,15 @@ func ensureSchema(db *sql.DB) error {
 		}
 		v = 1
 	}
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("migration connection: %w", err)
+	}
+	defer conn.Close()
 	for ; v < SchemaVersion; v++ {
-		step := versionedMigrations[v-1]
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("begin migration to v%d: %w", v+1, err)
-		}
-		if err := step(tx); err != nil {
-			tx.Rollback()
+		if err := versionedMigrations[v-1](ctx, conn); err != nil {
 			return fmt.Errorf("migrate to v%d: %w", v+1, err)
-		}
-		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", v+1)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("stamp v%d: %w", v+1, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit v%d: %w", v+1, err)
 		}
 	}
 	return nil
@@ -482,11 +485,11 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 
 // ---------- project queries ----------
 
-const ProjectCols = "slug, name, status, priority, work_dir, source, created_at, updated_at, archived_at"
+const ProjectCols = "slug, name, status, priority, work_dir, source, created_at, updated_at, archived_at, agent_task_slug"
 
 func ScanProject(row interface{ Scan(dest ...any) error }) (*Project, error) {
 	var p Project
-	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.Source, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
+	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.Source, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.AgentTaskSlug)
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +534,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, source, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, assignee, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, source, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, assignee, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, created_at, updated_at, archived_at, terminal_ref"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -541,7 +544,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.WaitingOn, &t.DueDate, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed,
 		&t.Assignee, &t.Harness, &t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
-		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
+		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt, &t.TerminalRef,
 	)
 	if err != nil {
 		return nil, err
@@ -570,6 +573,9 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Kind != "" {
 		where = append(where, "kind = ?")
 		args = append(args, filter.Kind)
+	}
+	if filter.ExcludeAgents {
+		where = append(where, "kind != 'project_agent'")
 	}
 	if filter.PlaybookSlug != "" {
 		where = append(where, "playbook_slug = ?")

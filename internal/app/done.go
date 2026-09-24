@@ -59,6 +59,10 @@ func cmdDone(args []string) int {
 		return rc
 	}
 
+	if task.Kind == KindProjectAgent {
+		fmt.Fprintf(os.Stderr, "error: %q is a project's permanent coordinator session and is never marked done\n", task.Slug)
+		return 1
+	}
 	now := store.NowISO()
 	res, err := db.Exec(
 		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=?`,

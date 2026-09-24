@@ -31,9 +31,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	}
 
 	// Stub osascript for the whole test.
-	oldOsa := iterm.Runner
-	iterm.Runner = func(args []string) error { return nil }
-	t.Cleanup(func() { iterm.Runner = oldOsa })
+	t.Cleanup(iterm.Stub(func(args []string) (string, error) { return "", nil }))
 
 	// Stub the headless claude runner so cmdDone doesn't try to invoke
 	// the real claude CLI for its post-flip KB sweep.

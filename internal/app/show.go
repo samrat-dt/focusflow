@@ -397,24 +397,23 @@ func printProjectMetadata(db *sql.DB, p *store.Project, root string) {
 
 	// Task breakdown.
 	slug := p.Slug
-	tasks, err := store.ListTasks(db, store.TaskFilter{Project: slug, IncludeArchived: false})
+	tasks, err := store.ListTasks(db, store.TaskFilter{Project: slug, IncludeArchived: false, ExcludeAgents: true})
 	if err != nil {
 		fmt.Printf("tasks:       (error: %v)\n", err)
 		return
 	}
-	var inProg, backlog, done int
+	counts := map[string]int{}
 	for _, t := range tasks {
-		switch t.Status {
-		case "in-progress":
-			inProg++
-		case "backlog":
-			backlog++
-		case "done":
-			done++
+		counts[t.Status]++
+	}
+	var parts []string
+	// Order: the classic three first (unchanged text), then the newer stages.
+	for _, st := range []string{store.StatusInProgress, store.StatusBacklog, store.StatusDone, store.StatusNext, store.StatusPaused, store.StatusReview} {
+		if counts[st] > 0 || st == store.StatusInProgress || st == store.StatusBacklog || st == store.StatusDone {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
 		}
 	}
-	fmt.Printf("tasks:       %d total  (%d in-progress, %d backlog, %d done)\n",
-		len(tasks), inProg, backlog, done)
+	fmt.Printf("tasks:       %d total  (%s)\n", len(tasks), strings.Join(parts, ", "))
 }
 
 // printPlaybookMetadata writes the human-readable view of a playbook row.

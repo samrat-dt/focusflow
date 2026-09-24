@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"focusflow/internal/store"
 	"os"
 )
 
@@ -69,6 +70,14 @@ func Run(args []string) int {
 		return cmdMessage(rest)
 	case "broadcast", "post":
 		return cmdBroadcast(rest)
+	case "project":
+		return cmdProject(rest)
+	case "pause":
+		return cmdPause(rest)
+	case "next":
+		return cmdSetStage(store.StatusNext, rest)
+	case "review":
+		return cmdSetStage(store.StatusReview, rest)
 	case "owner":
 		return cmdOwner(rest)
 	case "sync":
@@ -116,6 +125,9 @@ Sessions:
                         [--with "<instruction>" | --with-file <path>]
   focusflow do    <ref> --here [--force]     (bind THIS harness session — no new tab)
   focusflow do    <ref> --auto               (run headlessly in the background)
+  focusflow project agent|pause|unschedule <slug>  |  project message <slug> "<text>" [--fanout] [--urgent]  |  project schedule <slug> --every <dur>
+  focusflow pause <ref|project/<slug>>   (status → paused; stops a headless run / asks an open terminal to wrap up)
+  focusflow next|review <ref>            (stage moves; review = ready for approval, done approves)
   focusflow done  <ref>
   focusflow run playbook  <slug> [--dangerously-skip-permissions] [--here] [--auto]
                                   [--with "<instruction>" | --with-file <path>]

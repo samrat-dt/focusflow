@@ -80,6 +80,12 @@ func cmdInboxList(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	// Listing a task's OWN mailbox is a delivery: the session has now seen it.
+	if *as == "" && mailbox.TaskSlug != "" {
+		if _, err := store.MarkDelivered(db, mailbox); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
 	if *jsonOut {
 		printMessagesJSON(msgs)
 	} else {
@@ -209,6 +215,8 @@ type jsonMessage struct {
 	ReplyTo   *string         `json:"reply_to"`
 	Urgent    bool            `json:"urgent"`
 	Mail      string          `json:"mail"`
+	// DeliveredAt is when the recipient session first saw the message.
+	DeliveredAt *string `json:"delivered_at,omitempty"`
 }
 
 // toJSONMessage shapes a BusMessage the way control-center's parseRow
@@ -225,14 +233,20 @@ func toJSONMessage(m *store.BusMessage) jsonMessage {
 		s := m.ReplyTo.String
 		replyTo = &s
 	}
+	var delivered *string
+	if m.DeliveredAt.Valid {
+		d := m.DeliveredAt.String
+		delivered = &d
+	}
 	return jsonMessage{
-		ID:        m.ID,
-		Body:      m.Body,
-		CreatedAt: m.CreatedAt,
-		From:      from,
-		ReplyTo:   replyTo,
-		Urgent:    m.Urgent,
-		Mail:      m.Mail,
+		DeliveredAt: delivered,
+		ID:          m.ID,
+		Body:        m.Body,
+		CreatedAt:   m.CreatedAt,
+		From:        from,
+		ReplyTo:     replyTo,
+		Urgent:      m.Urgent,
+		Mail:        m.Mail,
 	}
 }
 

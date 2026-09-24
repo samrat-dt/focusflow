@@ -107,6 +107,12 @@ func cmdDo(args []string) int {
 	if *here {
 		return doHere(db, task, *force)
 	}
+	// One session per task, forever: a fresh session would orphan the
+	// existing conversation, so it needs an explicit --force.
+	if *fresh && task.SessionID.Valid && task.SessionID.String != "" && !*force && sessionHasTranscript(task) {
+		fmt.Fprintf(os.Stderr, "error: task %q already has a session (%s) and each task keeps ONE session forever; pass --force if you really want to start a fresh one\n", task.Slug, task.SessionID.String)
+		return 2
+	}
 	if task.Harness.Valid && task.Harness.String == "codex" {
 		fmt.Fprintf(os.Stderr, "error: task %q is bound to a Codex session; resume it from Codex (focusflow only spawns claude sessions)\n", task.Slug)
 		return 1
@@ -116,6 +122,14 @@ func cmdDo(args []string) int {
 	// that's already being served would fork the transcript, so refuse
 	// unless --force says the user really means it.
 	if !*force && task.SessionID.Valid && isSessionLive(task.SessionID.String) {
+		// Its terminal tab is still open: bring THAT tab forward rather than
+		// opening a second window on the same conversation.
+		if task.TerminalRef.Valid {
+			if found, err := iterm.FocusTab(task.TerminalRef.String); err == nil && found {
+				fmt.Printf("Focused %s (session %s is already open in a terminal tab)\n", task.Slug, task.SessionID.String)
+				return 0
+			}
+		}
 		fmt.Fprintf(os.Stderr,
 			"error: task %q already has a live session (%s); switch to that tab, or pass --force to open another anyway\n",
 			task.Slug, task.SessionID.String)
@@ -185,7 +199,7 @@ func cmdDo(args []string) int {
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 session_id=?, session_started=?, harness=?, updated_at=?
-			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			 WHERE slug=? AND status != 'done'`,
 			now, sessionID, now, resolvedHarness, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
@@ -196,7 +210,7 @@ func cmdDo(args []string) int {
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 updated_at=?
-			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			 WHERE slug=? AND status != 'done'`,
 			now, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
@@ -291,9 +305,14 @@ func cmdDo(args []string) int {
 	if project != nil {
 		envVars["FOCUSFLOW_PROJECT"] = project.Slug
 	}
-	if err := iterm.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
+	ref, err := iterm.SpawnTab(buildTabTitle(project, task), cwd, command, envVars)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if ref != "" {
+		// Remember the tab so the next `do` can focus it instead of opening another.
+		db.Exec(`UPDATE tasks SET terminal_ref = ? WHERE slug = ?`, ref, task.Slug)
 	}
 
 	// Post-spawn bookkeeping, outside the main tx.
@@ -481,7 +500,7 @@ func doHere(db *sql.DB, task *store.Task, force bool) int {
 	query := `UPDATE tasks SET status='in-progress',
 		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 		 session_id=?, session_started=?, harness=?, updated_at=?
-		 WHERE slug=? AND status IN ('backlog','in-progress')`
+		 WHERE slug=? AND status != 'done'`
 	args := []any{now, sessionID, now, harness, now, task.Slug}
 	if !force {
 		query += ` AND (session_id IS NULL OR session_id = ?)`
@@ -614,4 +633,12 @@ func markAutoRunDead(db *sql.DB, slug string) error {
 		now, now, slug,
 	)
 	return err
+}
+
+// sessionHasTranscript reports whether the task's session has a real
+// conversation on disk. A session id whose transcript is gone is stale, so
+// replacing it orphans nothing and needs no --force.
+func sessionHasTranscript(task *store.Task) bool {
+	_, err := sessionJSONLPath(task)
+	return err == nil
 }

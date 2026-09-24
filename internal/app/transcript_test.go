@@ -134,9 +134,7 @@ func TestTranscriptCmdNoSession(t *testing.T) {
 	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, "focusflow"))
 	t.Setenv("HOME", tmp)
 
-	oldOsa := iterm.Runner
-	iterm.Runner = func(args []string) error { return nil }
-	t.Cleanup(func() { iterm.Runner = oldOsa })
+	t.Cleanup(iterm.Stub(func(args []string) (string, error) { return "", nil }))
 
 	cmdInit(nil)
 	cmdAdd([]string{"task", "No Session Task", "--slug", "no-session"})
@@ -152,9 +150,7 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 	t.Setenv("FOCUSFLOW_ROOT", filepath.Join(tmp, "focusflow"))
 	t.Setenv("HOME", tmp)
 
-	oldOsa := iterm.Runner
-	iterm.Runner = func(args []string) error { return nil }
-	t.Cleanup(func() { iterm.Runner = oldOsa })
+	t.Cleanup(iterm.Stub(func(args []string) (string, error) { return "", nil }))
 
 	cmdInit(nil)
 

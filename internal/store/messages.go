@@ -24,16 +24,20 @@ type BusMessage struct {
 	Mail         string // "unread" | "read"
 	CreatedAt    string
 	ReadAt       sql.NullString
+	// DeliveredAt is when the recipient session first surfaced the message
+	// (a hook injected it, or it appeared in an inbox listing/pop) — a real
+	// delivery receipt, as opposed to ReadAt (consumed).
+	DeliveredAt sql.NullString
 }
 
-const BusMessageCols = "id, from_assignee, from_task_slug, to_assignee, to_task_slug, body, urgent, broadcast, reply_to, mail, created_at, read_at"
+const BusMessageCols = "id, from_assignee, from_task_slug, to_assignee, to_task_slug, body, urgent, broadcast, reply_to, mail, created_at, read_at, delivered_at"
 
 func ScanBusMessage(row interface{ Scan(dest ...any) error }) (*BusMessage, error) {
 	var m BusMessage
 	var urgent, broadcast int
 	err := row.Scan(
 		&m.ID, &m.FromAssignee, &m.FromTaskSlug, &m.ToAssignee, &m.ToTaskSlug,
-		&m.Body, &urgent, &broadcast, &m.ReplyTo, &m.Mail, &m.CreatedAt, &m.ReadAt,
+		&m.Body, &urgent, &broadcast, &m.ReplyTo, &m.Mail, &m.CreatedAt, &m.ReadAt, &m.DeliveredAt,
 	)
 	if err != nil {
 		return nil, err
@@ -220,11 +224,14 @@ func PopOldestUnread(db *sql.DB, f MailboxFilter, keepUnread bool) (*BusMessage,
 
 	if !keepUnread {
 		now := NowISO()
-		if _, err := tx.Exec(`UPDATE bus_messages SET mail='read', read_at=? WHERE id=?`, now, m.ID); err != nil {
+		if _, err := tx.Exec(`UPDATE bus_messages SET mail='read', read_at=?, delivered_at=COALESCE(delivered_at, ?) WHERE id=?`, now, now, m.ID); err != nil {
 			return nil, fmt.Errorf("mark read: %w", err)
 		}
 		m.Mail = "read"
 		m.ReadAt = sql.NullString{String: now, Valid: true}
+		if !m.DeliveredAt.Valid {
+			m.DeliveredAt = sql.NullString{String: now, Valid: true}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -256,4 +263,36 @@ func MarkRead(db *sql.DB, id string) (found bool, err error) {
 		return false, fmt.Errorf("check existence %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// MarkDelivered stamps delivered_at on every not-yet-delivered message in a
+// mailbox — called when a session is shown its mail (an inbox listing, a
+// hook injecting a reminder, a nudge). It returns the messages it stamped
+// (unread ones only matter to callers building a reminder). Idempotent: a
+// message keeps its first delivery time.
+func MarkDelivered(db *sql.DB, f MailboxFilter) ([]*BusMessage, error) {
+	var args []any
+	where := f.whereClause(&args)
+	rows, err := db.Query("SELECT "+BusMessageCols+" FROM bus_messages WHERE "+where+" AND delivered_at IS NULL AND mail='unread' ORDER BY created_at ASC, rowid ASC", args...)
+	if err != nil {
+		return nil, fmt.Errorf("find undelivered: %w", err)
+	}
+	var out []*BusMessage
+	for rows.Next() {
+		m, err := ScanBusMessage(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	rows.Close()
+	now := NowISO()
+	for _, m := range out {
+		if _, err := db.Exec(`UPDATE bus_messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`, now, m.ID); err != nil {
+			return nil, fmt.Errorf("mark delivered %s: %w", m.ID, err)
+		}
+		m.DeliveredAt = sql.NullString{String: now, Valid: true}
+	}
+	return out, nil
 }

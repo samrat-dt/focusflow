@@ -38,7 +38,7 @@ func cmdList(args []string) int {
 
 func listTasksCmd(args []string) int {
 	fs := flagSet("list tasks")
-	status := fs.String("status", "", "backlog|in-progress|done")
+	status := fs.String("status", "", store.StatusUsage)
 	project := fs.String("project", "", "project slug")
 	priority := fs.String("priority", "", "high|medium|low")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
@@ -60,6 +60,10 @@ func listTasksCmd(args []string) int {
 		return 2
 	}
 
+	if *status != "" && !store.IsValidStatus(*status) {
+		fmt.Fprintf(os.Stderr, "error: --status must be %s, got %q\n", store.StatusUsage, *status)
+		return 2
+	}
 	filter := store.TaskFilter{
 		Status:          *status,
 		Project:         *project,
@@ -596,8 +600,17 @@ func listProjectsCmd(args []string) int {
 			label = "1 task "
 		}
 		var segs []string
+		if counts.next > 0 {
+			segs = append(segs, fmt.Sprintf("%d NX", counts.next))
+		}
 		if counts.inProg > 0 {
 			segs = append(segs, fmt.Sprintf("%d IP", counts.inProg))
+		}
+		if counts.paused > 0 {
+			segs = append(segs, fmt.Sprintf("%d PA", counts.paused))
+		}
+		if counts.review > 0 {
+			segs = append(segs, fmt.Sprintf("%d RV", counts.review))
 		}
 		if counts.backlog > 0 {
 			segs = append(segs, fmt.Sprintf("%d BL", counts.backlog))
@@ -630,6 +643,9 @@ func renderProjectsJSON(projects []*store.Project, db *sql.DB) int {
 		Total      int    `json:"total"`
 		InProgress int    `json:"in_progress"`
 		Backlog    int    `json:"backlog"`
+		Next       int    `json:"next"`
+		Paused     int    `json:"paused"`
+		Review     int    `json:"review"`
 		Done       int    `json:"done"`
 		Archived   bool   `json:"archived,omitempty"`
 		Updated    string `json:"updated"`
@@ -643,7 +659,7 @@ func renderProjectsJSON(projects []*store.Project, db *sql.DB) int {
 		}
 		rows = append(rows, jsonRow{
 			Slug: p.Slug, Name: p.Name, Priority: p.Priority, Status: p.Status,
-			Total: counts.total, InProgress: counts.inProg, Backlog: counts.backlog, Done: counts.done,
+			Total: counts.total, InProgress: counts.inProg, Backlog: counts.backlog, Next: counts.next, Paused: counts.paused, Review: counts.review, Done: counts.done,
 			Archived: p.ArchivedAt.Valid, Updated: p.UpdatedAt,
 		})
 	}
@@ -659,7 +675,7 @@ func renderProjectsJSON(projects []*store.Project, db *sql.DB) int {
 // renderProjectsTSV prints projects with a fixed header.
 func renderProjectsTSV(projects []*store.Project, db *sql.DB) int {
 	w := os.Stdout
-	fmt.Fprintln(w, strings.Join([]string{"slug", "priority", "status", "total", "in_progress", "backlog", "done", "archived"}, "\t"))
+	fmt.Fprintln(w, strings.Join([]string{"slug", "priority", "status", "total", "in_progress", "backlog", "next", "paused", "review", "done", "archived"}, "\t"))
 	for _, p := range projects {
 		counts, err := projectTaskCounts(db, p.Slug)
 		if err != nil {
@@ -669,7 +685,8 @@ func renderProjectsTSV(projects []*store.Project, db *sql.DB) int {
 		fmt.Fprintln(w, strings.Join([]string{
 			p.Slug, p.Priority, p.Status,
 			fmt.Sprintf("%d", counts.total), fmt.Sprintf("%d", counts.inProg),
-			fmt.Sprintf("%d", counts.backlog), fmt.Sprintf("%d", counts.done),
+			fmt.Sprintf("%d", counts.backlog), fmt.Sprintf("%d", counts.next), fmt.Sprintf("%d", counts.paused),
+			fmt.Sprintf("%d", counts.review), fmt.Sprintf("%d", counts.done),
 			boolCell(p.ArchivedAt.Valid),
 		}, "\t"))
 	}
@@ -785,7 +802,7 @@ func renderPlaybooksTSV(pbs []*store.Playbook) int {
 
 func listRunsCmd(args []string) int {
 	fs := flagSet("list runs")
-	status := fs.String("status", "", "backlog|in-progress|done")
+	status := fs.String("status", "", store.StatusUsage)
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	format := fs.String("format", "table", "output format: table|json|tsv")
 	_ = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
@@ -893,14 +910,14 @@ func renderRunsTSV(tasks []*store.Task) int {
 // ---------- helpers ----------
 
 type taskCounts struct {
-	total, inProg, backlog, done int
+	total, inProg, backlog, done, next, paused, review int
 }
 
 func projectTaskCounts(db *sql.DB, projectSlug string) (taskCounts, error) {
 	var c taskCounts
 	rows, err := db.Query(
 		`SELECT status, COUNT(*) FROM tasks
-		 WHERE project_slug = ? AND archived_at IS NULL
+		 WHERE project_slug = ? AND archived_at IS NULL AND kind != 'project_agent'
 		 GROUP BY status`, projectSlug)
 	if err != nil {
 		return c, err
@@ -920,6 +937,12 @@ func projectTaskCounts(db *sql.DB, projectSlug string) (taskCounts, error) {
 			c.backlog += n
 		case "done":
 			c.done += n
+		case "next":
+			c.next += n
+		case "paused":
+			c.paused += n
+		case "review":
+			c.review += n
 		}
 	}
 	return c, rows.Err()
@@ -929,8 +952,14 @@ func statusAbbrev(status string) string {
 	switch status {
 	case "backlog":
 		return "BL"
+	case "next":
+		return "NX"
 	case "in-progress":
 		return "IP"
+	case "paused":
+		return "PA"
+	case "review":
+		return "RV"
 	case "done":
 		return "DN"
 	}

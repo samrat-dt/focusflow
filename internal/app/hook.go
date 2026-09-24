@@ -168,6 +168,11 @@ func cmdHookUserPromptSubmit(args []string) int {
 			"offer a new task; if it signals the task is done, offer to close it out. Else proceed silently.",
 		task.Name, slug,
 	)
+	// Mail waiting for this task is delivered right here: stamp it (the
+	// dashboard's delivery receipt) and tell the agent it is there.
+	if fresh, err := store.MarkDelivered(db, store.MailboxFilter{TaskSlug: slug}); err == nil && len(fresh) > 0 {
+		ctx += fmt.Sprintf(" focusflow-bus: %d unread message(s) are waiting for this task — run `focusflow inbox pop` to read and answer them.", len(fresh))
+	}
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":     "UserPromptSubmit",
@@ -329,6 +334,7 @@ func stopBroadcastNudge(db *sql.DB, slug string) int {
 	if err := store.MarkSurfaced(db, slug, ids...); err != nil {
 		return 0
 	}
+	store.MarkDelivered(db, store.MailboxFilter{TaskSlug: slug})
 	if err := store.RecordNudge(db, slug); err != nil {
 		return 0
 	}

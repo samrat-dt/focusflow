@@ -114,7 +114,7 @@ func cmdUpdateTask(args []string) int {
 	fs := flagSet("update task")
 	workDir := fs.String("work-dir", "", "new absolute work directory")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	status := fs.String("status", "", "backlog|in-progress|done")
+	status := fs.String("status", "", store.StatusUsage)
 	priority := fs.String("priority", "", "high|medium|low")
 	assignee := fs.String("assignee", "", "person or agent to assign")
 	clearAssignee := fs.Bool("clear-assignee", false, "remove the assignee")
@@ -134,10 +134,8 @@ func cmdUpdateTask(args []string) int {
 	}
 
 	if *status != "" {
-		switch *status {
-		case "backlog", "in-progress", "done":
-		default:
-			fmt.Fprintf(os.Stderr, "error: --status must be backlog|in-progress|done, got %q\n", *status)
+		if !store.IsValidStatus(*status) {
+			fmt.Fprintf(os.Stderr, "error: --status must be %s, got %q\n", store.StatusUsage, *status)
 			return 2
 		}
 	}
