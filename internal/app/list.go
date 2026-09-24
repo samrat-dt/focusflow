@@ -130,7 +130,7 @@ func listTasksCmd(args []string) int {
 	}
 
 	// json/tsv must stay valid, parseable output even when empty (an
-	// empty JSON array, or just the TSV header) — tend parses
+	// empty JSON array, or just the TSV header) — the dashboard parses
 	// this unconditionally, so "(no tasks)" prose would break it.
 	if *format == "json" {
 		return renderTasksJSON(tasks, db)
@@ -298,7 +298,7 @@ func autoRunDisplay(t *store.Task) string {
 }
 
 // renderTasksJSON prints tasks as a JSON array with a fixed field set
-// (tend depends on it); there is deliberately no "kind"
+// (the dashboard depends on it); there is deliberately no "kind"
 // key, even though the Task struct has one — the output never includes it.
 func renderTasksJSON(tasks []*store.Task, db *sql.DB) int {
 	// Key order is fixed and optional keys are omitted when empty: live, auto_run,
@@ -317,7 +317,7 @@ func renderTasksJSON(tasks []*store.Task, db *sql.DB) int {
 		Archived bool     `json:"archived,omitempty"`
 	}
 	// Fork `ps` once for the whole render, not once per task — this list
-	// can return hundreds of rows (tend's own call passes
+	// can return hundreds of rows (the dashboard's own call passes
 	// --include-done --include-archived --kind all).
 	procLines, _ := psLines()
 	now := time.Now()

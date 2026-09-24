@@ -159,7 +159,7 @@ end tell
 // spawnScript renders the AppleScript for a backend. iTerm2: reuse the
 // front window when one exists, otherwise create one — `current window`
 // is missing when the app has no windows (e.g. a launchd-started
-// tend), which used to fail the spawn outright. Terminal.app:
+// the dashboard), which used to fail the spawn outright. Terminal.app:
 // `do script` opens a new window running the command, then it is titled.
 func spawnScript(b Backend, safeTitle, safeCommand string) string {
 	if b == TerminalApp {

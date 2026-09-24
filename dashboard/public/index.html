@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focusflow</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/help.css">
+</head>
+<body>
+<script type="application/json" id="help-data"></script>
+<section class="token-panel" id="token-panel" role="alertdialog" aria-label="Access token needed" hidden>
+  <div class="token-panel-card" id="token-panel-body"></div>
+</section>
+<header class="top">
+  <h1>Focusflow</h1>
+  <nav class="tabs" id="tabs" aria-label="Views">
+    <button type="button" class="tab" data-view="board" aria-pressed="true">Board</button>
+    <button type="button" class="tab" data-view="projects" aria-pressed="false">Projects</button>
+    <button type="button" class="tab" data-view="archive" aria-pressed="false">Archive</button>
+    <button type="button" class="tab" id="inbox-btn" data-view="inbox" aria-pressed="false">Inbox <span id="inbox-badge" class="badge" hidden>0</span></button>
+  </nav>
+  <div class="search" role="search">
+    <input id="search" type="search" placeholder="Search briefs, notes, KB…  ( / )" autocomplete="off" spellcheck="false" aria-label="Search" maxlength="100">
+    <div class="search-results" id="search-results" hidden></div>
+  </div>
+  <div class="top-actions">
+    <label class="toggle"><input type="checkbox" id="sound-toggle"> Sound</label>
+    <button type="button" id="refresh">Refresh</button>
+    <button type="button" id="capture-btn" class="primary" title="Capture a task (Ctrl+K)">Capture <span class="kbd">^K</span></button>
+  </div>
+</header>
+<div class="stats" id="stats" aria-label="Stats" hidden></div>
+
+<div id="banner" class="banner" role="alert" hidden></div>
+<div id="lost-banner" class="lost-banner" role="alert" hidden><div id="lost-banner-body"></div></div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<main>
+  <div class="board" id="board" aria-live="polite"></div>
+  <div class="projects" id="projects" aria-live="polite" hidden></div>
+  <div class="archive" id="archive" aria-live="polite" hidden></div>
+  <div class="inbox" id="inbox" aria-live="polite" hidden></div>
+</main>
+
+<footer class="foot" id="foot"></footer>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <div class="drawer-head">
+    <div>
+      <h2 id="drawer-title"></h2>
+      <div class="muted mono" id="drawer-slug"></div>
+      <div class="muted chat-state" id="chat-state"></div>
+    </div>
+    <div class="drawer-buttons">
+      <button type="button" id="drawer-action" class="primary" hidden></button>
+      <button type="button" id="drawer-close" aria-label="Close">Close</button>
+    </div>
+  </div>
+  <div class="drawer-actions" id="drawer-actions" hidden></div>
+  <div class="drawer-msg" id="drawer-msg" role="status" hidden></div>
+  <div class="drawer-body" id="drawer-body">
+    <section class="sect chat" id="chat" aria-label="Chat">
+      <h3>Chat</h3>
+      <div class="thread" id="chat-thread" aria-live="polite"></div>
+      <div class="chat-note muted" id="chat-note" hidden>Delivered, no reply yet.</div>
+      <div id="chat-composer">
+        <textarea id="chat-text" rows="3" maxlength="380" placeholder="Message this task…" aria-label="Message"></textarea>
+        <div class="chat-row">
+          <span class="muted" id="chat-count">0/380</span>
+          <span class="chat-buttons">
+            <button type="button" id="chat-send" class="primary" hidden>Send</button>
+            <button type="button" id="chat-queue" hidden>Queue</button>
+            <button type="button" id="chat-headless" hidden>Run headless…</button>
+          </span>
+        </div>
+        <label class="chat-fanout toggle" id="chat-fanout-row" hidden><input type="checkbox" id="chat-fanout"> Also tell every open subtask of this project</label>
+        <div class="chat-hint muted" id="chat-hint" hidden></div>
+        <div class="chat-confirm" id="chat-confirm" role="alert" hidden>
+          <div id="chat-confirm-text"></div>
+          <div class="chat-buttons">
+            <button type="button" id="chat-confirm-cancel">Cancel</button>
+            <button type="button" id="chat-confirm-go" class="primary">Confirm</button>
+          </div>
+        </div>
+        <div class="form-error" id="chat-error" role="alert" hidden></div>
+      </div>
+    </section>
+    <div id="drawer-details"></div>
+  </div>
+</aside>
+
+<dialog id="capture" aria-labelledby="capture-title">
+  <form id="capture-form" novalidate>
+    <h2 id="capture-title">Capture a task</h2>
+    <label class="field">Name
+      <input id="cap-name" maxlength="200" autocomplete="off" required>
+    </label>
+    <div class="row">
+      <label class="field">Project
+        <select id="cap-project"><option value="">None (floating)</option></select>
+      </label>
+      <label class="field">Priority
+        <select id="cap-priority">
+          <option value="high">High</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+    </div>
+    <fieldset id="cap-newproject" class="newproject" hidden>
+      <legend>New project</legend>
+      <label class="field">Project name
+        <input id="cap-np-name" maxlength="200" autocomplete="off">
+      </label>
+      <div class="row">
+        <label class="field">Work directory
+          <input id="cap-np-dir" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">Project priority
+          <select id="cap-np-priority">
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+    <label class="field">Note (optional)
+      <textarea id="cap-note" rows="4" maxlength="2000"></textarea>
+    </label>
+    <div id="cap-error" class="form-error" role="alert" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" id="cap-cancel">Cancel</button>
+      <button type="submit" id="cap-save">Save &amp; close</button>
+      <button type="button" id="cap-save-open" class="primary">Save &amp; open</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="newproject" aria-labelledby="np-title">
+  <form id="np-form" novalidate>
+    <h2 id="np-title">New project</h2>
+    <label class="field">Name
+      <input id="np-name" maxlength="200" autocomplete="off" required>
+    </label>
+    <div class="row">
+      <label class="field">Work directory
+        <input id="np-dir" autocomplete="off" spellcheck="false" placeholder="/absolute/path">
+      </label>
+      <label class="field">Priority
+        <select id="np-priority">
+          <option value="high">High</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+    </div>
+    <div id="np-error" class="form-error" role="alert" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" id="np-cancel">Cancel</button>
+      <button type="submit" id="np-save" class="primary">Create project</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/help.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

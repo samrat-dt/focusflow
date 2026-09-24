@@ -213,6 +213,6 @@ focusflow inbox stats
 
 `make install` copies the binary to `~/.local/bin` (the one installed copy), refreshes the
 skill and the three Claude Code hooks (SessionStart, UserPromptSubmit, Stop), and restarts a
-tend launchd job if one is installed. The database runs in WAL mode with a 30s busy
+the dashboard launchd job if one is installed. The database runs in WAL mode with a 30s busy
 timeout, and its schema is versioned (`PRAGMA user_version`); a database newer than the binary is
 refused rather than opened. Everything under `~/.focusflow` is private to your user (0700/0600).

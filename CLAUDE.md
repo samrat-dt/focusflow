@@ -11,7 +11,7 @@ A Go CLI (`focusflow`) that manages personal tasks and bootstraps per-task Claud
 make build
 # or: go build -o focusflow .
 
-# Install: copies the binary to ~/.local/bin (single copy), refreshes skill + hooks, restarts tend
+# Install: copies the binary to ~/.local/bin (single copy), refreshes skill + hooks, restarts the dashboard
 make install
 
 # Run all tests (fast — no network, no real iTerm/Claude)

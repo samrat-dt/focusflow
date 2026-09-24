@@ -26,12 +26,12 @@ type finding struct {
 // doctorCtx carries what the checks need, so tests can point every path
 // at a sandbox.
 type doctorCtx struct {
-	root       string
-	home       string
-	launchdCC  string // path of tend's launchd plist ("" = skip)
-	pathBinary func() string
-	binVersion func(bin string) string
-	now        time.Time
+	root             string
+	home             string
+	launchdDashboard string // path of the dashboard launchd plist ("" = skip)
+	pathBinary       func() string
+	binVersion       func(bin string) string
+	now              time.Time
 }
 
 func defaultDoctorCtx() (doctorCtx, error) {
@@ -44,9 +44,9 @@ func defaultDoctorCtx() (doctorCtx, error) {
 		return doctorCtx{}, err
 	}
 	return doctorCtx{
-		root:      root,
-		home:      home,
-		launchdCC: filepath.Join(home, "Library", "LaunchAgents", "local.tend.plist"),
+		root:             root,
+		home:             home,
+		launchdDashboard: filepath.Join(home, "Library", "LaunchAgents", "local.focusflow.dashboard.plist"),
 		pathBinary: func() string {
 			p, _ := exec.LookPath("focusflow")
 			return p
@@ -86,7 +86,7 @@ func runDoctor(c doctorCtx) []finding {
 	out = append(out, checkBinary(c)...)
 	out = append(out, checkTerminal()...)
 	out = append(out, checkBackups(c)...)
-	out = append(out, checkControlCenter(c)...)
+	out = append(out, checkDashboard(c)...)
 	return out
 }
 
@@ -290,29 +290,29 @@ func checkBackups(c doctorCtx) []finding {
 
 var plistBinRe = regexp.MustCompile(`(?s)<key>FOCUSFLOW_BIN</key>\s*<string>([^<]+)</string>`)
 
-func checkControlCenter(c doctorCtx) []finding {
-	if c.launchdCC == "" {
+func checkDashboard(c doctorCtx) []finding {
+	if c.launchdDashboard == "" {
 		return nil
 	}
-	raw, err := os.ReadFile(c.launchdCC)
+	raw, err := os.ReadFile(c.launchdDashboard)
 	if err != nil {
-		return nil // tend not installed — nothing to check
+		return nil // dashboard not installed — nothing to check
 	}
 	m := plistBinRe.FindSubmatch(raw)
 	if m == nil {
-		return []finding{warn("tend", "launchd job has no FOCUSFLOW_BIN", "")}
+		return []finding{warn("dashboard", "launchd job has no FOCUSFLOW_BIN", "")}
 	}
 	bin := string(m[1])
 	if _, err := os.Stat(bin); err != nil {
-		return []finding{fail("tend", "FOCUSFLOW_BIN "+bin+" does not exist", "point the launchd job at the installed focusflow")}
+		return []finding{fail("dashboard", "FOCUSFLOW_BIN "+bin+" does not exist", "point the launchd job at the installed focusflow")}
 	}
 	if v := c.binVersion(bin); v != "" {
 		self := c.binVersion(os.Args[0])
 		if self != "" && v != self {
-			return []finding{warn("tend", fmt.Sprintf("uses %s (%s), this is %s", bin, v, self), "make install")}
+			return []finding{warn("dashboard", fmt.Sprintf("uses %s (%s), this is %s", bin, v, self), "make install")}
 		}
 	}
-	return []finding{ok("tend", "uses "+bin)}
+	return []finding{ok("dashboard", "uses "+bin)}
 }
 
 func cmdDoctor(args []string) int {

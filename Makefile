@@ -7,18 +7,28 @@ VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 LDFLAGS  := -X main.version=$(VERSION)
 
 # Where `make install` puts the binary. ~/.local/bin is what launchd jobs
-# (tend's launchd job) and hooks resolve, so there is exactly one
+# (the dashboard's launchd job) and hooks resolve, so there is exactly one
 # installed copy — never a second one in the repo dir that can drift.
 PREFIX   ?= $(HOME)/.local
-CC_LABEL := local.tend
+DASH_LABEL := local.focusflow.dashboard
 
-.PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover
+.PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover dashboard app dashboard-test
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
 
 test:
 	go test ./...
+
+# The dashboard (Node, no dependencies) lives in ./dashboard.
+dashboard:
+	cd dashboard && node --no-warnings bin/setup.js --launchd
+
+app:
+	cd dashboard && python3 bin/make-app.py
+
+dashboard-test:
+	cd dashboard && node --test
 
 vet:
 	go vet ./...
@@ -37,7 +47,7 @@ cover:
 	@go tool cover -func=coverage.out | tail -1
 
 # check is what CI runs (minus the coverage gate; see `make cover`).
-check: fmt-check vet staticcheck race
+check: fmt-check vet staticcheck race dashboard-test
 
 install: build
 	@mkdir -p $(PREFIX)/bin
@@ -49,8 +59,8 @@ install: build
 	@# Refresh the skill + hooks from the freshly installed binary.
 	$(PREFIX)/bin/$(BINARY) skill install --force
 	@# Restart the dashboard so it picks up the new binary (if installed).
-	@if launchctl list $(CC_LABEL) >/dev/null 2>&1; then \
-		launchctl kickstart -k gui/$$(id -u)/$(CC_LABEL) && echo "restarted $(CC_LABEL)"; \
+	@if launchctl list $(DASH_LABEL) >/dev/null 2>&1; then \
+		launchctl kickstart -k gui/$$(id -u)/$(DASH_LABEL) && echo "restarted $(DASH_LABEL)"; \
 	fi
 	@# Warn about any other focusflow earlier on PATH that would shadow this one.
 	@first=$$(command -v $(BINARY) 2>/dev/null); \

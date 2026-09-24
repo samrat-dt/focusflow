@@ -229,7 +229,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 }
 
 // TestE2E_ControlCenterExactListTasksCall proves, end to end, that the
-// exact call tend makes —
+// exact call the dashboard makes —
 // `focusflow list tasks --format json --include-done --include-archived
 // --kind all` — parses cleanly and produces every field readTasks()
 // expects, with no missing/mismatched field, against a realistic mix of
@@ -255,19 +255,19 @@ func TestE2E_ControlCenterExactListTasksCall(t *testing.T) {
 	out := captureStdout(t, func() {
 		rc := cmdList([]string{"tasks", "--format", "json", "--include-done", "--include-archived", "--kind", "all"})
 		if rc != 0 {
-			t.Fatalf("tend's exact call failed: rc=%d", rc)
+			t.Fatalf("the dashboard's exact call failed: rc=%d", rc)
 		}
 	})
 
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
-		t.Fatalf("tend's exact call did not produce parseable JSON: %v\noutput:\n%s", err, out)
+		t.Fatalf("the dashboard's exact call did not produce parseable JSON: %v\noutput:\n%s", err, out)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows (ship-it, old-one archived, finished done), got %d: %v", len(rows), rows)
 	}
 
-	// tend's task reader uses slug, name,
+	// the dashboard's task reader uses slug, name,
 	// project, status, priority always, and tolerates live/tags/archived
 	// being absent (`j.live`, `j.tags ?? ...`, `!!j.archived`), so we omit
 	// them when empty/false. When present they must be correctly typed.
@@ -275,7 +275,7 @@ func TestE2E_ControlCenterExactListTasksCall(t *testing.T) {
 	for _, row := range rows {
 		for _, k := range requiredKeys {
 			if _, ok := row[k]; !ok {
-				t.Errorf("row %v missing key %q required by tend's readTasks()", row["slug"], k)
+				t.Errorf("row %v missing key %q required by the dashboard's readTasks()", row["slug"], k)
 			}
 		}
 		if v, ok := row["tags"]; ok {

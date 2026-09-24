@@ -18,7 +18,7 @@ func bindSession(t *testing.T, slug, sessionID string) {
 	}
 }
 
-// unbindSession simulates a dispatch/tend context: no harness
+// unbindSession simulates a dispatch/dashboard context: no harness
 // session id in the environment at all.
 func unbindSession(t *testing.T) {
 	t.Helper()
@@ -101,7 +101,7 @@ func TestParseMessageArgs(t *testing.T) {
 }
 
 // TestCmdMessage_DispatchToTaskMailbox verifies the exact call
-// tend makes: `message user/<slug> "<text>"` from an unbound
+// the dashboard makes: `message user/<slug> "<text>"` from an unbound
 // (dispatch) context lands in that task's own mailbox, not the human's.
 func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
 	setupRoot(t)
@@ -151,7 +151,7 @@ func TestCmdMessage_DispatchToTaskMailbox(t *testing.T) {
 
 // TestCmdMessage_TaskRepliesToUser verifies a bound session's `message
 // user "<reply>"` lands in the human's aggregate mailbox tagged with its
-// own task slug, matching how tend's poller attributes replies.
+// own task slug, matching how the dashboard's poller attributes replies.
 func TestCmdMessage_TaskRepliesToUser(t *testing.T) {
 	setupRoot(t)
 	seedTask(t, "worker")
@@ -278,7 +278,7 @@ func TestCmdBroadcast_RequiresNonEmptyBody(t *testing.T) {
 }
 
 // extractBracketedID pulls the "[xxxxxxxx]" id out of `focusflow message`'s
-// stdout, mirroring tend's parseFocusId regex.
+// stdout, mirroring the dashboard's parseFocusId regex.
 func extractBracketedID(t *testing.T, out string) string {
 	t.Helper()
 	start := strings.Index(out, "[")
@@ -290,7 +290,7 @@ func extractBracketedID(t *testing.T, out string) string {
 }
 
 // TestControlCenterInboxJSONShape locks in the exact JSON shape
-// tend's lib/inbox.js parseRow expects: id, body, created_at,
+// the dashboard's lib/inbox.js parseRow expects: id, body, created_at,
 // from.task_slug (nullable), reply_to (nullable), urgent, mail.
 func TestControlCenterInboxJSONShape(t *testing.T) {
 	setupRoot(t)

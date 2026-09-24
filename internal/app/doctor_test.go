@@ -14,7 +14,7 @@ func testDoctorCtx(t *testing.T) doctorCtx {
 		t.Fatal(err)
 	}
 	self, _ := os.Executable()
-	c.launchdCC = ""
+	c.launchdDashboard = ""
 	c.pathBinary = func() string { return self }
 	c.binVersion = func(string) string { return Version }
 	return c

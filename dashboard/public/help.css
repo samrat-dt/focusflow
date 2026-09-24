@@ -1,0 +1,12 @@
+/* Styles for the recovery steps. Shared by the app (linked from index.html) and
+   the standalone help page (inlined into it by lib/help.js), so both look the same.
+   Colours come from the variables each page defines. */
+.help-h { font-size: 20px; margin: 18px 0 6px; }
+.help-what { margin: 0 0 12px; }
+.help-steps { margin: 0 0 12px; padding-left: 22px; }
+.help-steps li { margin: 0 0 10px; }
+.help-cmd { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.help-cmd code { flex: 1; min-width: 0; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; }
+.help-copy { flex: none; }
+.help-fallback p { margin: 10px 0 4px; }
+.help-launcher { margin: 12px 0 0; }

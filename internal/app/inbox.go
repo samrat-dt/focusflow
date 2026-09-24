@@ -165,7 +165,7 @@ func cmdInboxPop(args []string) int {
 }
 
 // cmdInboxRead implements `focusflow inbox read <id> [--json]` — shows
-// and acks one specific message out of order. tend calls this
+// and acks one specific message out of order. the dashboard calls this
 // after it has already rendered the message locally and tolerates a
 // failure (id already gone), so a missing id is a plain error exit, not
 // a crash.
@@ -229,7 +229,7 @@ type jsonMessage struct {
 	DeliveredAt *string `json:"delivered_at,omitempty"`
 }
 
-// toJSONMessage shapes a BusMessage the way tend's parseRow
+// toJSONMessage shapes a BusMessage the way the dashboard's parseRow
 // expects: id, body, created_at, from.task_slug (nullable), reply_to
 // (nullable), urgent, mail.
 func toJSONMessage(m *store.BusMessage) jsonMessage {
