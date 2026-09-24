@@ -136,3 +136,45 @@ func TestRestoreRejectsCorruptArchive(t *testing.T) {
 		t.Error("data disturbed by a failed restore")
 	}
 }
+
+func TestBackupScheduleInstallUninstall(t *testing.T) {
+	setupRoot(t)
+	var calls [][]string
+	old := launchctl
+	launchctl = func(args ...string) ([]byte, error) { calls = append(calls, args); return nil, nil }
+	t.Cleanup(func() { launchctl = old })
+
+	if rc := cmdBackup([]string{"schedule", "install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	plist, _ := backupPlistPath()
+	b, err := os.ReadFile(plist)
+	if err != nil {
+		t.Fatalf("plist not written: %v", err)
+	}
+	for _, want := range []string{backupSchedulerLabel, "<string>backup</string>", "<key>Hour</key><integer>2</integer>", "backup.log"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("plist missing %q", want)
+		}
+	}
+	boot := false
+	for _, c := range calls {
+		boot = boot || c[0] == "bootstrap"
+	}
+	if !boot {
+		t.Errorf("launchctl calls: %v", calls)
+	}
+	out := captureStdout(t, func() { cmdBackup([]string{"schedule", "status"}) })
+	if !strings.Contains(out, "installed and loaded") {
+		t.Errorf("status = %q", out)
+	}
+	if rc := cmdBackup([]string{"schedule", "uninstall"}); rc != 0 {
+		t.Fatal("uninstall")
+	}
+	if _, err := os.Stat(plist); err == nil {
+		t.Error("plist not removed")
+	}
+	if cmdBackup([]string{"schedule", "bogus"}) != 2 {
+		t.Error("unknown schedule subcommand must be a usage error")
+	}
+}

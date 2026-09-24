@@ -93,8 +93,14 @@ func TestDoctorRecentBackupIsOK(t *testing.T) {
 		t.Fatal("backup failed")
 	}
 	c := testDoctorCtx(t)
+	if got := level(runDoctor(c), "backups"); got != "warn" {
+		t.Errorf("recent backup without a schedule = %s, want warn", got)
+	}
+	plist, _ := backupPlistPath()
+	os.MkdirAll(filepath.Dir(plist), 0o755)
+	os.WriteFile(plist, []byte("<plist/>"), 0o644)
 	if got := level(runDoctor(c), "backups"); got != "ok" {
-		t.Errorf("backups = %s", got)
+		t.Errorf("recent backup with a schedule = %s, want ok", got)
 	}
 	c.now = time.Now().Add(10 * 24 * time.Hour)
 	if got := level(runDoctor(c), "backups"); got != "warn" {

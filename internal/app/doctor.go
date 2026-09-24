@@ -279,7 +279,13 @@ func checkBackups(c doctorCtx) []finding {
 	if fi, err := os.Stat(newest); err == nil && c.now.Sub(fi.ModTime()) > 7*24*time.Hour {
 		return []finding{warn("backups", "newest backup is over 7 days old", "focusflow backup")}
 	}
-	return []finding{ok("backups", fmt.Sprintf("%d kept, newest %s", len(matches), filepath.Base(newest)))}
+	detail := fmt.Sprintf("%d kept, newest %s", len(matches), filepath.Base(newest))
+	if p, err := backupPlistPath(); err == nil {
+		if _, err := os.Stat(p); err != nil {
+			return []finding{warn("backups", detail+"; no automatic schedule", "focusflow backup schedule install")}
+		}
+	}
+	return []finding{ok("backups", detail)}
 }
 
 var plistBinRe = regexp.MustCompile(`(?s)<key>FOCUSFLOW_BIN</key>\s*<string>([^<]+)</string>`)

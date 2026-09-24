@@ -163,6 +163,7 @@ Message bus:
   focusflow search <query> [--in names,briefs,updates,notes,kb] [--project <slug>] [--regex] [--json]
   focusflow doctor [--fix] [--json]           (health check)
   focusflow backup [--out <dir>] [--keep N]   (consistent snapshot of ~/.focusflow)
+  focusflow backup schedule install|uninstall|status   (daily automatic backup via launchd)
   focusflow restore <archive.tar.gz> --force
   focusflow version
   focusflow stats [--since all|<N>d] [--project <slug>] [--card] [--out <path>]

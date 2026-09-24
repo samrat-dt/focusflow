@@ -219,6 +219,9 @@ func extractBackup(archive, dst string) error {
 }
 
 func cmdBackup(args []string) int {
+	if len(args) > 0 && args[0] == "schedule" {
+		return cmdBackupSchedule(args[1:])
+	}
 	fs := flagSet("backup")
 	out := fs.String("out", "", "directory for the archive (default <root>/backups)")
 	keep := fs.Int("keep", defaultKeep, "keep the newest N backups in the directory (0 = keep all)")
