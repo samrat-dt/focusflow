@@ -163,20 +163,16 @@ test('a failed launch is relayed unchanged (502), logged with ok:false, and not 
 // Claude rejects ("Session ID ... is already in use") when the task already has a session. So a
 // stopped task with a session continues via `claude --resume` directly instead (claude harness only
 // — focusflow's CLI has no equivalent for any harness).
-test('a stopped task with a claude session continues headlessly via claude --resume, not focusflow do --auto', async () => {
+test('a stopped task with a claude session continues through focusflow do --auto (which resumes it and tracks the run)', async () => {
   h = await makeApp({ sessions: { going: { sessionId: 'sess-going', harness: 'claude' } } });
   const r = await send('going', { text: 'Run the suite', mode: 'headless', confirm: true });
   assert.equal(r.status, 200);
   assert.deepEqual(r.json(), { ok: true, mode: 'headless' });
-  assert.equal(h.resumeCalls.length, 1);
-  assert.equal(h.resumeCalls[0].sessionId, 'sess-going');
-  assert.equal(h.resumeCalls[0].text, `Run the suite${HEADLESS_CUE}`);
-  assert.equal(h.resumeCalls[0].cwd, '/work/x');
-  assert.equal(doCalls().length, 0, 'focusflow do --auto must not run for a continuation');
+  assert.deepEqual(doCalls().map(c => c.args), [['do', 'going', '--auto', '--with', `Run the suite${HEADLESS_CUE}`]]);
 });
 
 test('the continuation is recorded with via: resume; a first-ever run is recorded with via: auto', async () => {
-  h = await makeApp({ sessions: { going: { sessionId: 'sess-going', harness: 'claude' } } });
+  h = await makeApp();
   await send('going', { text: 'x', mode: 'headless', confirm: true });
   await send('todo', { text: 'y', mode: 'headless', confirm: true });
   const events = sentLog();
@@ -189,8 +185,7 @@ test('a stopped task whose session is not claude is still refused, with a harnes
   const r = await send('coding', { text: 'x', mode: 'headless', confirm: true });
   assert.equal(r.status, 409);
   assert.match(r.json().error, /codex/);
-  assert.match(r.json().error, /Queue/);
-  assert.equal(h.resumeCalls.length, 0);
+  assert.match(r.json().error, /terminal/);
   assert.equal(doCalls().length, 0);
 });
 
@@ -198,34 +193,23 @@ test('a stopped task with no recorded harness is refused the same way', async ()
   h = await makeApp();
   const r = await send('unknown-harness', { text: 'x', mode: 'headless', confirm: true });
   assert.equal(r.status, 409);
-  assert.equal(h.resumeCalls.length, 0);
+  assert.equal(doCalls().length, 0);
 });
 
-test('a resume launch failure is relayed (502) and logged with ok:false, via:resume', async () => {
-  h = await makeApp({
-    sessions: { going: { sessionId: 'sess-going', harness: 'claude' } },
-    resume: async () => { throw new Error('cannot run claude: not found'); },
-  });
+test('a continuation launch failure is relayed (502) and logged with ok:false, via:resume', async () => {
+  h = await makeApp({ focusflow: async args => { if (args[0] === 'do') throw new Error('error: claude not found'); return { stdout: '', stderr: '' }; } });
   const r = await send('going', { text: 'x', mode: 'headless', confirm: true });
   assert.equal(r.status, 502);
-  assert.equal(r.json().error, 'cannot run claude: not found');
+  assert.equal(r.json().error, 'error: claude not found');
   const ev = sentLog();
   assert.equal(ev[0].payload.ok, false);
   assert.equal(ev[0].payload.via, 'resume');
 });
 
-test('has_session but no session row found (readSession returns null) is refused, not crashed', async () => {
-  h = await makeApp(); // no `sessions` entry for `going`
-  const r = await send('going', { text: 'x', mode: 'headless', confirm: true });
-  assert.equal(r.status, 409);
-  assert.equal(h.resumeCalls.length, 0);
-});
-
 test('refresh() runs before the response for a continuation, so has_session/live are current immediately', async () => {
   h = await makeApp({
     live: [],
-    sessions: { going: { sessionId: 'sess-going', harness: 'claude' } },
-    resume: async () => { h.live.add('going'); return { pid: 1 }; }, // simulate focusflow noticing the new process
+    focusflow: async args => { if (args[0] === 'do') h.live.add('going'); return { stdout: '', stderr: '' }; },
   });
   await send('going', { text: 'x', mode: 'headless', confirm: true });
   const t = (await h.get('/api/tasks/going/thread')).json();

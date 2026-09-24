@@ -98,7 +98,7 @@ final class Board: NSObject, WKNavigationDelegate {
 
     func url() -> URL {
         let port = readPort()
-        let frag = "token=\(readToken())&view=board" + (mini ? "&mini=1" : "")
+        let frag = "token=\(readToken())&route=%2Fhome" + (mini ? "&mini=1" : "")
         return URL(string: "http://127.0.0.1:\(port)/#\(frag)")!
     }
 
@@ -176,26 +176,80 @@ final class App: NSObject, NSApplicationDelegate {
 
     func buildMenu() {
         let bar = NSMenu()
-        let appItem = NSMenuItem(); bar.addItem(appItem)
-        let appMenu = NSMenu(); appItem.submenu = appMenu
-        appMenu.addItem(withTitle: "Quit Focusflow", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        func menu(_ title: String) -> NSMenu {
+            let item = NSMenuItem(); bar.addItem(item)
+            let m = NSMenu(title: title); item.submenu = m
+            return m
+        }
+        func add(_ m: NSMenu, _ title: String, _ action: Selector, _ key: String, _ mods: NSEvent.ModifierFlags = [.command], target: AnyObject? = nil, tag: Int = 0) {
+            let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            it.keyEquivalentModifierMask = mods
+            it.target = target
+            it.tag = tag
+            m.addItem(it)
+        }
 
-        let viewItem = NSMenuItem(); bar.addItem(viewItem)
-        let viewMenu = NSMenu(title: "View"); viewItem.submenu = viewMenu
-        let reload = NSMenuItem(title: "Reload", action: #selector(reloadAll), keyEquivalent: "r"); reload.target = self
-        viewMenu.addItem(reload)
-        let mini = NSMenuItem(title: "Toggle Mini Board", action: #selector(toggleMini), keyEquivalent: "m")
-        mini.keyEquivalentModifierMask = [.command, .shift]; mini.target = self
-        viewMenu.addItem(mini)
-        let pin = NSMenuItem(title: "Mini Board Always on Top", action: #selector(togglePin(_:)), keyEquivalent: ""); pin.target = self; pin.state = .on
-        viewMenu.addItem(pin)
+        let appMenu = menu("Focusflow")
+        add(appMenu, "About Focusflow", #selector(go(_:)), "", target: self, tag: 10)
+        appMenu.addItem(.separator())
+        add(appMenu, "Settings…", #selector(go(_:)), ",", target: self, tag: 11)
+        appMenu.addItem(.separator())
+        add(appMenu, "Hide Focusflow", #selector(NSApplication.hide(_:)), "h")
+        add(appMenu, "Quit Focusflow", #selector(NSApplication.terminate(_:)), "q")
 
-        let winItem = NSMenuItem(); bar.addItem(winItem)
-        let winMenu = NSMenu(title: "Window"); winItem.submenu = winMenu
-        winMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        NSApp.windowsMenu = winMenu
+        let file = menu("File")
+        add(file, "New Task", #selector(newTask), "n", target: self)
+        add(file, "New Project", #selector(newProject), "n", [.command, .shift], target: self)
+        file.addItem(.separator())
+        add(file, "Search…", #selector(search), "k", target: self)
+        add(file, "Close Window", #selector(NSWindow.performClose(_:)), "w")
+
+        // Without an Edit menu, copy and paste do not reach the web view.
+        let edit = menu("Edit")
+        add(edit, "Undo", Selector(("undo:")), "z")
+        add(edit, "Redo", Selector(("redo:")), "z", [.command, .shift])
+        edit.addItem(.separator())
+        add(edit, "Cut", #selector(NSText.cut(_:)), "x")
+        add(edit, "Copy", #selector(NSText.copy(_:)), "c")
+        add(edit, "Paste", #selector(NSText.paste(_:)), "v")
+        add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
+
+        let view = menu("View")
+        add(view, "Reload", #selector(reloadAll), "r", target: self)
+        add(view, "Show Mini Window", #selector(toggleMini), "m", [.command, .shift], target: self)
+        let pin = NSMenuItem(title: "Keep Mini Window on Top", action: #selector(togglePin(_:)), keyEquivalent: ""); pin.target = self; pin.state = .on
+        view.addItem(pin)
+
+        let goMenu = menu("Go")
+        for (i, name) in ["Home", "Inbox", "Tasks", "Projects", "Memory"].enumerated() {
+            add(goMenu, name, #selector(go(_:)), String(i + 1), target: self, tag: i + 1)
+        }
+        goMenu.addItem(.separator())
+        add(goMenu, "Archive", #selector(go(_:)), "", target: self, tag: 6)
+
+        let win = menu("Window")
+        add(win, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
+        NSApp.windowsMenu = win
+
+        let help = menu("Help")
+        add(help, "Focusflow Help", #selector(go(_:)), "?", target: self, tag: 12)
+        add(help, "Troubleshooting", #selector(go(_:)), "", target: self, tag: 13)
+        add(help, "Keyboard Shortcuts", #selector(go(_:)), "/", target: self, tag: 14)
+        NSApp.helpMenu = help
         NSApp.mainMenu = bar
     }
+
+    // The web app routes on its URL fragment; the menus just change it.
+    static let routes = [1: "/home", 2: "/inbox", 3: "/tasks", 4: "/projects", 5: "/memory", 6: "/archive",
+                         10: "/about", 11: "/settings", 12: "/help/getting-started", 13: "/help/troubleshooting", 14: "/help/shortcuts"]
+    @objc func go(_ sender: NSMenuItem) {
+        guard let r = App.routes[sender.tag] else { return }
+        main.makeKeyAndOrderFront(nil)
+        mainBoard.web.evaluateJavaScript("location.hash = '#\(r)'", completionHandler: nil)
+    }
+    @objc func newTask() { main.makeKeyAndOrderFront(nil); mainBoard.web.evaluateJavaScript("dispatchEvent(new CustomEvent('ff:new-task'))", completionHandler: nil) }
+    @objc func newProject() { main.makeKeyAndOrderFront(nil); mainBoard.web.evaluateJavaScript("dispatchEvent(new CustomEvent('ff:new-project'))", completionHandler: nil) }
+    @objc func search() { main.makeKeyAndOrderFront(nil); mainBoard.web.evaluateJavaScript("dispatchEvent(new CustomEvent('ff:search'))", completionHandler: nil) }
 
     @objc func reloadAll() { mainBoard.load(); miniBoard.load() }
     @objc func toggleMini() { if miniWin.isVisible { miniWin.orderOut(nil) } else { miniWin.orderFrontRegardless() } }

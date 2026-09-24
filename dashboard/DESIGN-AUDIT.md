@@ -279,3 +279,33 @@ freedom" (done: `RESEARCH.md` §3). The list below is the original question set.
    stay read-and-act only?
 6. **Market research**: do it live now with web search and cite sources in About (recommended), dated today.
 7. **Flow history**: which details are safe to publish in About (it is a personal tool): keep it high-level?
+
+---
+
+## 16. Status after the redesign (2026-09-25)
+
+**Shipped:** light-only design system (tokens, Inter, 5-step type scale, one accent, status dots instead of coloured
+chips, line icons); left sidebar with Home · Inbox · Tasks · Projects · Memory, pinned projects, Archive, Settings,
+About & Help; ⌘K palette and shortcuts; Home as ranked attention with reasons, inline reply, approve, snooze;
+Tasks board (six stages, drag) and list (group, filter, bulk); task page with editable name, stage, priority, due,
+waiting-on and tags, a run panel with stop and log, and Conversation · Memory · Brief · Notes tabs; projects grid with
+progress and a project page with tasks, assistant, brief and memory; two-pane Inbox; Memory page; Settings
+(notifications, quiet hours, stuck threshold, stale/due days, terminal app, status, backups); About (what it is, why
+not just Claude Code, the landscape, what we built, Flow → Focusflow, vision) and Help (getting started, concepts,
+guides, shortcuts, CLI, troubleshooting, backups, FAQ, what's new), all dated; native Mac menus (File/Edit/Go/Help)
+with the app opening on Home.
+
+**Naming changes:** Focus/Resume/Start → *Open in terminal*; headless → *background run*; Next → *Up next*;
+Review → *Ready for review*; coordinator → *project assistant*; Capture → *New task*; Queue only → handled
+automatically (messages go to the open terminal, else start a background run).
+
+**Correctness fixed on the way:** background runs that exited normally were marked `dead` (so Home would have called
+every answered message a failure); runs now record their exit code (`finished` vs `dead`) and stopping a run reaches
+claude itself. All background runs now go through `focusflow do --auto`, so they are tracked, stoppable and remembered.
+
+**Verified:** unit tests, and `npm run e2e`, which drives 13 real journeys in headless Chrome (approve and undo,
+snooze, inline reply and memory, clean-run status, quick add with shorthand, editing, memory, drag between stages,
+⌘K, settings, every page without console errors) plus 400px and mini-window layouts without horizontal overflow.
+
+**Still open:** removing `/classic`; judgement loop (Request changes → house rules); proof of work on reviews;
+worktree per task; click-through notifications from the Mac app; signing and notarising the app.

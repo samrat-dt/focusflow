@@ -37,6 +37,7 @@ focusflow/
 │   │   ├── do.go run.go             # session spawner; playbook runs
 │   │   ├── hook.go                  # session-start / user-prompt-submit / stop hooks
 │   │   ├── message.go inbox.go watch.go   # message bus
+│   │   ├── memory.go                # remember / memories / memory / forget; session-start recall
 │   │   ├── stats.go transcript.go workdir.go playbook.go
 │   │   ├── stages.go project.go     # next/review/pause; project agents, message, schedule
 │   │   ├── backup.go                # focusflow backup / restore (VACUUM INTO snapshot)
@@ -49,6 +50,7 @@ focusflow/
 │   ├── store/                       # SQLite data layer
 │   │   ├── db.go                    # schema, models, CRUD, OpenDB, versioned migrations
 │   │   ├── messages.go bus_extras.go# bus queries, watches, stats, nudges
+│   │   ├── memories.go              # memory: capture from human messages, recall per task/project/global
 │   │   └── *_test.go
 │   └── iterm/                       # terminal tab spawning (iTerm2, Terminal.app)
 │       └── iterm.go
@@ -96,4 +98,6 @@ Everything under `~/.focusflow` is private (dirs 0700, files 0600); `ensureRootP
 - `hookCommand` in `internal/app/skill.go` is the exact string matched in `~/.claude/settings.json`. Changing it orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.
+- Headless runs (`do --auto`) run claude through a small `/bin/sh` wrapper (`headlessWrapper` in `do.go`) that records the exit code in `<log>.exit` and forwards TERM to claude; `refreshAutoRunStatus` marks a clean exit `finished` and anything else `dead`.
+- The dashboard (`dashboard/`) is a Node app with a dependency-free ES-module front end in `dashboard/public/ui/`. `npm test` runs its unit tests; `npm run e2e` drives the real journeys in headless Chrome against a sandbox.
 - Hook tests must call `isolateHookEnv` (throwaway `$HOME`/`$FOCUSFLOW_ROOT`, cleared `CLAUDE_CODE_SESSION_ID`/`CODEX_THREAD_ID`) so nothing touches real state on a dev machine. `initTempRoot` also clears `FOCUSFLOW_TASK`/`FOCUSFLOW_PROJECT` so tests pass when run inside a live focusflow session.

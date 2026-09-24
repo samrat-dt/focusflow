@@ -31,15 +31,13 @@ const DEFAULT_TASKS = () => [
 // answer to any call that is not an inbox listing; the default answers
 // `focusflow message` with a new id and everything else with empty output.
 // `sessions`: map slug -> { sessionId, harness } | undefined, backs the `readSession` DI seam.
-// `resume`: overrides the fake `resumeRun` call; defaults to a successful `{ pid: 1 }`.
-export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, resume, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder, runs = {} } = {}) {
+export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder, runs = {} } = {}) {
   const calls = [];
-  const resumeCalls = [];
   const inboxRows = { rows: [], fail: null };
   const list = tasks ?? DEFAULT_TASKS();
   const liveSet = new Set(live);
   const config = {
-    token: TOKEN, device: 'd1', dataDir: tmpdir('ff-h-data-'), focusRoot: tmpdir('ff-h-focusflow-'),
+    token: TOKEN, device: 'd1', dataDir: tmpdir('ff-h-data-'), focusRoot: tmpdir('ff-h-focusflow-'), home: tmpdir('ff-h-home-'),
     cacheDb: tmpdir('ff-h-cache-') + '/store.db',
     terminalApp: 'Terminal.app', focusBin: 'focusflow', claudeBin: 'claude',
     // notifications stay off so no test can ever run the real osascript
@@ -62,7 +60,6 @@ export async function makeApp({ tasks, live = ['running'], focusflow, workDir = 
     readWorkDir: () => workDir,
     readSession: ({ slug }) => sessions[slug] ?? null,
     readRun: ({ slug }) => runs[slug] ?? null,
-    resumeRun: async opts => { resumeCalls.push(opts); return resume ? resume(opts) : { pid: 1 }; },
     readProjects: () => [],
     readProjectsFull: () => projectsFull,
     readOwners: () => owners,
@@ -91,7 +88,7 @@ export async function makeApp({ tasks, live = ['running'], focusflow, workDir = 
   });
 
   return {
-    app, store, calls, resumeCalls, config, tasks: list, live: liveSet, inboxRows, port,
+    app, store, calls, config, tasks: list, live: liveSet, inboxRows, port,
     get: (p, o) => request('GET', p, undefined, o),
     post: (p, b, o) => request('POST', p, b, o),
     request,

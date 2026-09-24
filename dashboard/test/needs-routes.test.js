@@ -83,11 +83,13 @@ test('quick-add with stage next queues the new task, and rejects an unknown stag
   assert.equal((await h.post('/api/capture', { name: 'Another one', stage: 'sideways' })).status, 400);
 });
 
-test('a headless continuation tells focusflow memory what the human said', async () => {
-  h = await makeApp({ live: [], tasks: [T('cont', 'in-progress')], sessions: { cont: { sessionId: 's-1', harness: 'claude' } } });
+test('a background continuation goes through focusflow, which remembers what the human said (no separate call)', async () => {
+  h = await makeApp({ live: [], tasks: [T('cont', 'in-progress')] });
   const r = await h.post('/api/tasks/cont/message', { text: 'Monthly first', mode: 'headless', confirm: true });
   assert.equal(r.status, 200);
-  assert.deepEqual(h.calls.map(c => c.args).find(a => a[0] === 'remember'), ['remember', 'Monthly first', '--task', 'cont', '--said']);
+  const verbs = h.calls.map(c => c.args[0]);
+  assert.ok(verbs.includes('do'));
+  assert.ok(!verbs.includes('remember'), 'focusflow do captures memory itself');
 });
 
 test('snooze, dismiss and restore are events; approving records how long the review waited', async () => {

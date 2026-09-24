@@ -12,7 +12,7 @@ LDFLAGS  := -X main.version=$(VERSION)
 PREFIX   ?= $(HOME)/.local
 DASH_LABEL := local.focusflow.dashboard
 
-.PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover dashboard app dashboard-test
+.PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover dashboard app dashboard-test e2e
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
@@ -26,6 +26,10 @@ dashboard:
 
 app:
 	cd dashboard && python3 bin/make-app.py
+
+# The app's core journeys in headless Chrome against a throwaway sandbox (needs Google Chrome).
+e2e:
+	cd dashboard && node e2e/run.mjs
 
 dashboard-test:
 	cd dashboard && node --test

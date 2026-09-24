@@ -11,12 +11,12 @@ import { focusEnv } from './focus-env.js';
 import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
 import { buildNeeds, buildSince } from './needs.js';
 import { learnedBias, createGate } from './attention.js';
+import { taskEditArgs, projectEditArgs, writeBrief, writeNote, validateSettings, saveSettings, SETTINGS, EditError } from './editing.js';
 import { lastActivity } from './activity.js';
 import { tailLog, pidAlive } from './runs.js';
 import { spawn } from 'node:child_process';
 import { buildOverview, buildArchive } from './hierarchy.js';
 import { runPickFolder } from './pick-folder.js';
-import { runResume } from './resume-run.js';
 import { isWorking } from './activity.js';
 import { validateName, slugify, uniqueSlug, thinBrief, isStubBrief, CaptureError, MAX_NOTE } from './capture.js';
 import { SLUG } from './slug.js';
@@ -27,7 +27,8 @@ import { helpContent, appFragments } from './help.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const STATIC = {
-  '/': ['index.html', 'text/html; charset=utf-8'],
+  '/': ['ui/index.html', 'text/html; charset=utf-8'],
+  '/classic': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/logic.js': ['logic.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
@@ -124,14 +125,14 @@ export function createApp({
   readWorkDir = ({ slug }) => readFocusWorkDir({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   readSession = ({ slug }) => readFocusSession({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   readRun = ({ slug }) => readFocusRun({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
-  resumeRun = opts => runResume(opts),
   activityHome = undefined,
   mirror = null,
   sync = null,
 }) {
-  const rawNotifier = injectedNotifier ?? createNotifier({ enabled: config.tunables.notifications !== false });
+  // The real notifier is always built enabled; the Settings switch (notifications) is checked per banner.
+  const rawNotifier = injectedNotifier ?? createNotifier({ enabled: true });
   // Urgent news always gets through; everything else waits out quiet hours and arrives as one summary.
-  const gate = createGate({ notify: a => rawNotifier.notify(a), quietHours: config.tunables.quiet_hours ?? '22:00-08:00', now });
+  const gate = createGate({ notify: a => { if (injectedNotifier || config.tunables.notifications !== false) rawNotifier.notify(a); }, quietHours: () => (config.tunables.quiet_hours === undefined ? '22:00-08:00' : config.tunables.quiet_hours), now });
   const notifier = { notify: a => gate.notify(a), status: () => rawNotifier.status() };
   const status = { lastTickAt: null, lastError: null, mirrorError: null, live: new Set(), working: new Set(), malformed, runStates: null };
 
@@ -170,7 +171,7 @@ export function createApp({
       const t = store.getTask(slug);
       if (!t || t.status === 'paused') continue; // a run the user stopped is not news
       const failed = st === 'dead';
-      arrivals.push({ slug, name: t.name, urgent: failed, body: failed ? 'The headless run stopped unexpectedly.' : t.status === 'review' ? 'Finished. Ready for your review.' : 'The headless run finished.' });
+      arrivals.push({ slug, name: t.name, urgent: failed, body: failed ? 'The background run stopped unexpectedly.' : t.status === 'review' ? 'Finished. Ready for your review.' : 'Claude finished working on this.' });
     }
     if (arrivals.length) { try { notifier.notify(arrivals); } catch { /* a banner is a nicety */ } }
   }
@@ -449,45 +450,19 @@ export function createApp({
     if (status.live.has(slug)) {
       return sendQueue(slug, c.text, { downgraded: true, note: 'The task is live, so the message was queued instead of starting a headless run.' });
     }
-    if (!t.has_session) {
-      // First-ever run: only focusflow can start this cleanly.
-      let error = null;
-      try {
-        await runFocusCmd(['do', slug, '--auto', '--with', headlessBody(c.text)], FOCUSFLOW_DO_TIMEOUT_MS);
-      } catch (err) {
-        error = err.message;
-      }
-      record('message.sent', `task:${slug}`, { slug, text: c.text, mode: 'headless', via: 'auto', ok: error === null, ...(error === null ? {} : { error }) });
-      refresh();
-      if (error !== null) throw new HttpError(502, error);
-      return { ok: true, mode: 'headless' };
-    }
-
-    // A session exists but is not live: continue it directly (focusflow's own `do --auto` would reuse
-    // `--session-id`, which Claude rejects once that id already exists). Only supported for the
-    // claude harness — focusflow's CLI has no equivalent for any harness, so this app talks to the
-    // binary itself.
-    if (t.harness !== 'claude') {
-      throw new HttpError(409, `focusflow cannot continue a "${t.harness ?? 'unknown'}" session headlessly from focusflow yet. Use Queue instead, then Resume the task to get the answer.`);
-    }
-    const session = readSession({ slug });
-    const workDir = session ? readWorkDir({ slug }) : null;
-    if (!session || !workDir) {
-      throw new HttpError(409, 'cannot find this task\'s session or work directory to continue it headlessly. Use Queue instead, then Resume the task to get the answer.');
+    // Every background run goes through focusflow (`do --auto`): it starts a fresh session or resumes the
+    // existing one, records the run (so it shows as working, can be stopped, and is flagged when it goes
+    // quiet or fails), and remembers what the human said. Only claude sessions can be resumed this way.
+    if (t.has_session && t.harness !== 'claude') {
+      throw new HttpError(409, `focusflow cannot continue a "${t.harness ?? 'unknown'}" session in the background yet. It was saved for later instead: open the task in a terminal to get the answer.`);
     }
     let error = null;
     try {
-      await resumeRun({
-        claudeBin: config.claudeBin, sessionId: session.sessionId, text: headlessBody(c.text), cwd: workDir,
-        env: focusEnv({ focusBin: config.claudeBin, terminalApp: config.terminalApp }),
-        logFile: path.join(path.dirname(config.cacheDb), 'resume-logs', `${slug}-${Date.now()}.log`),
-      });
+      await runFocusCmd(['do', slug, '--auto', '--with', headlessBody(c.text)], FOCUSFLOW_DO_TIMEOUT_MS);
     } catch (err) {
       error = err.message;
     }
-    // This path bypasses focusflow's CLI, so tell focusflow's memory what the human said (best effort).
-    if (error === null) { try { await runFocusCmd(['remember', c.text, '--task', slug, '--said'], 10000); } catch { /* memory is a nicety here */ } }
-    record('message.sent', `task:${slug}`, { slug, text: c.text, mode: 'headless', via: 'resume', ok: error === null, ...(error === null ? {} : { error }) });
+    record('message.sent', `task:${slug}`, { slug, text: c.text, mode: 'headless', via: t.has_session ? 'resume' : 'auto', ok: error === null, ...(error === null ? {} : { error }) });
     refresh();
     if (error !== null) throw new HttpError(502, error);
     return { ok: true, mode: 'headless' };
@@ -866,7 +841,7 @@ export function createApp({
       if (!entry) return fail(res, 404, 'not found');
       if (req.method !== 'GET') return fail(res, 405, 'method not allowed', { allow: 'GET' });
       let body = readText(path.join(PUBLIC_DIR, entry[0]));
-      if (body !== null && pathname === '/') body = withHelpData(body, port);
+      if (body !== null && (pathname === '/' || pathname === '/classic')) body = withHelpData(body, port);
       return body === null ? fail(res, 404, 'not found') : send(res, 200, body, entry[1]);
     }
 
@@ -936,6 +911,54 @@ export function createApp({
       const ts = new URL(req.url, 'http://localhost').searchParams.get('ts') ?? '';
       if (Number.isNaN(Date.parse(ts))) return fail(res, 400, 'ts must be an ISO timestamp');
       return json(res, 200, buildSince({ tasks: store.tasks(), messages: store.messages(config.device), since: new Date(ts).toISOString() }));
+    }
+    if (pathname === '/api/settings') {
+      if (req.method === 'GET') {
+        const out = { terminal_app: config.terminalApp };
+        for (const k of Object.keys(SETTINGS)) if (k !== 'terminal_app') out[k] = config.tunables[k] ?? null;
+        if (out.quiet_hours === null && config.tunables.quiet_hours === undefined) out.quiet_hours = '22:00-08:00';
+        if (out.notifications === null) out.notifications = true;
+        if (out.stall_minutes === null) out.stall_minutes = 15;
+        return json(res, 200, { settings: out, needs_restart: ['terminal_app'] });
+      }
+      if (!need('POST')) return;
+      let changes;
+      try { changes = validateSettings(await readJson(req)); } catch (err) { return fail(res, err instanceof EditError ? 400 : 500, err.message); }
+      try { saveSettings(config.home, changes); } catch (err) { return fail(res, 500, `could not save settings: ${err.message}`); }
+      for (const [k, v] of Object.entries(changes)) { if (k === 'terminal_app') config.terminalApp = v; else config.tunables[k] = v; }
+      return json(res, 200, { ok: true, saved: Object.keys(changes) });
+    }
+    const em = /^\/api\/(tasks|projects)\/([^/]+)\/(edit|brief|note)$/.exec(pathname);
+    if (em) {
+      let slug;
+      try { slug = decodeURIComponent(em[2]); } catch { return fail(res, 400, 'bad slug'); }
+      if (!SLUG.test(slug)) return fail(res, 400, 'bad slug');
+      const isTask = em[1] === 'tasks';
+      let current = null;
+      if (isTask) current = store.getTask(slug);
+      else { try { current = readProjectsFull().find(p => p.slug === slug) ?? null; } catch (err) { return fail(res, 502, err.message); } }
+      if (!current) return fail(res, 404, isTask ? 'no such task' : 'no such project');
+      if (em[3] === 'brief' && req.method === 'GET') return json(res, 200, { brief: readText(path.join(config.focusRoot, em[1], slug, 'brief.md')) });
+      if (!need('POST')) return;
+      const body = await readJson(req);
+      try {
+        if (em[3] === 'brief') { writeBrief(config.focusRoot, em[1], slug, body.text); record('brief.edited', `${isTask ? 'task' : 'project'}:${slug}`, { slug, chars: String(body.text).length }); return json(res, 200, { ok: true }); }
+        if (em[3] === 'note') {
+          if (!isTask) return fail(res, 404, 'notes are per task');
+          const file = writeNote(config.focusRoot, slug, body.text, now());
+          record('note.added', `task:${slug}`, { slug, file });
+          return json(res, 200, { ok: true, file });
+        }
+        const args = isTask ? taskEditArgs(slug, body, current) : projectEditArgs(slug, body, current);
+        if (!args.length) return json(res, 200, { ok: true, changed: false });
+        await serial(() => runFocusCmd(args, 15000));
+        record(isTask ? 'task.edited' : 'project.edited', `${isTask ? 'task' : 'project'}:${slug}`, { slug, fields: Object.keys(body) });
+        refresh();
+        return json(res, 200, { ok: true, changed: true });
+      } catch (err) {
+        if (err instanceof EditError) return fail(res, 400, err.message);
+        return fail(res, 502, err.message);
+      }
     }
     const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run)$/.exec(pathname);
     if (tm) {

@@ -3,11 +3,16 @@ package app
 import (
 	"focusflow/internal/iterm"
 	"focusflow/internal/store"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // stubITerm replaces iterm.Runner with a counter + captured-script
@@ -108,8 +113,8 @@ func TestDo_Auto_SpawnsDetachedProcessAndRecordsPID(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("do --auto rc=%d", rc)
 	}
-	if len(capturedArgs) == 0 || capturedArgs[0] != "claude" {
-		t.Errorf("expected exec of claude, got %v", capturedArgs)
+	if len(capturedArgs) < 4 || capturedArgs[0] != "/bin/sh" || capturedArgs[3] != "claude" {
+		t.Errorf("expected claude run through the exit-recording wrapper, got %v", capturedArgs)
 	}
 	found := false
 	for _, a := range capturedArgs {
@@ -674,4 +679,103 @@ func TestDoCodexHarnessOnlyWithHere(t *testing.T) {
 	if *spawns != 0 {
 		t.Error("no spawn for a codex-bound task")
 	}
+}
+
+// fakeClaudeScript writes an executable that stands in for claude and ignores its arguments.
+func fakeClaudeScript(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "fake-claude")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// runWrapped starts a headless run whose "claude" is script, and returns the task as recorded.
+func runWrapped(t *testing.T, slug, script string) *store.Task {
+	t.Helper()
+	seedTask(t, slug)
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		args[2] = script // the wrapper's $0: run the fake instead of claude
+		return exec.Command(name, args...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+	if rc := cmdDo([]string{slug, "--auto"}); rc != 0 {
+		t.Fatalf("do --auto rc=%d", rc)
+	}
+	task, err := store.GetTask(openTestDB(t), slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func waitForFile(t *testing.T, p string) string {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
+			return strings.TrimSpace(string(b))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("%s never appeared", p)
+	return ""
+}
+
+func waitForExit(t *testing.T, pid int64) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		if syscall.Kill(int(pid), 0) != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("pid %d is still running", pid)
+}
+
+func TestDo_Auto_CleanExitIsFinishedNotDead(t *testing.T) {
+	setupRoot(t)
+	task := runWrapped(t, "clean-run", fakeClaudeScript(t, "echo working; exit 0"))
+	if got := waitForFile(t, exitFileFor(task.AutoRunLog.String)); got != "0" {
+		t.Fatalf("exit file = %q, want 0", got)
+	}
+	waitForExit(t, task.AutoRunPID.Int64)
+	db := openTestDB(t)
+	if err := refreshAutoRunStatus(db, task); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := store.GetTask(db, "clean-run")
+	if after.AutoRunStatus.String != "finished" {
+		t.Errorf("a run that exits 0 must be finished, got %q", after.AutoRunStatus.String)
+	}
+}
+
+func TestDo_Auto_FailingExitIsDead(t *testing.T) {
+	setupRoot(t)
+	task := runWrapped(t, "bad-run", fakeClaudeScript(t, "exit 3"))
+	if got := waitForFile(t, exitFileFor(task.AutoRunLog.String)); got != "3" {
+		t.Fatalf("exit file = %q, want 3", got)
+	}
+	waitForExit(t, task.AutoRunPID.Int64)
+	db := openTestDB(t)
+	refreshAutoRunStatus(db, task)
+	after, _ := store.GetTask(db, "bad-run")
+	if after.AutoRunStatus.String != "dead" {
+		t.Errorf("a run that exits non-zero must be dead, got %q", after.AutoRunStatus.String)
+	}
+}
+
+func TestDo_Auto_StoppingTheRunStopsClaudeToo(t *testing.T) {
+	setupRoot(t)
+	marker := filepath.Join(t.TempDir(), "child.pid")
+	task := runWrapped(t, "long-run", fakeClaudeScript(t, "echo $$ > "+marker+"; exec sleep 30"))
+	child, _ := strconv.Atoi(waitForFile(t, marker))
+	if err := syscall.Kill(int(task.AutoRunPID.Int64), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitForFile(t, exitFileFor(task.AutoRunLog.String)); got == "0" {
+		t.Errorf("a stopped run must not record success")
+	}
+	waitForExit(t, int64(child))
 }

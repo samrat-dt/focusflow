@@ -12,6 +12,7 @@
     "url": "node bin/url.js",
     "setup": "node --no-warnings bin/setup.js",
     "docs": "node bin/sync-readme.js",
-    "app": "python3 bin/make-app.py"
+    "app": "python3 bin/make-app.py",
+    "e2e": "node e2e/run.mjs"
   }
 }

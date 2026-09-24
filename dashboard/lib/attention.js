@@ -92,7 +92,7 @@ export function inQuietHours(date, spec) {
 // as one summary. `flush()` is called on every tick.
 export function createGate({ notify, quietHours, now = () => new Date() }) {
   let held = [];
-  const quiet = () => inQuietHours(now(), quietHours);
+  const quiet = () => inQuietHours(now(), typeof quietHours === 'function' ? quietHours() : quietHours);
   return {
     notify(arrivals) {
       const urgent = arrivals.filter(a => a.urgent);

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -582,11 +583,14 @@ func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstra
 	}
 	args = append(args, extraArgs...)
 
-	cmd := execCommand("claude", args...)
+	// A tiny shell wrapper records claude's exit code next to the log, so a run that ends normally
+	// (it answered a message but did not close the task) is "finished", not mistaken for a crash.
+	// It forwards TERM/INT/HUP to claude, so stopping the recorded pid still stops claude itself.
+	cmd := execCommand("/bin/sh", append([]string{"-c", headlessWrapper, "claude"}, args...)...)
 	cmd.Dir = task.WorkDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.Env = append(os.Environ(), "FOCUSFLOW_TASK="+task.Slug)
+	cmd.Env = append(os.Environ(), "FOCUSFLOW_TASK="+task.Slug, "FOCUSFLOW_EXIT_FILE="+exitFileFor(logPath))
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		fmt.Fprintf(os.Stderr, "error: start headless claude: %v\n", err)
@@ -612,8 +616,9 @@ func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstra
 
 // refreshAutoRunStatus checks whether a task's recorded auto_run_pid is
 // still alive and, if the row claims 'running' but the pid is gone,
-// flips it to 'dead' (a crash/kill outside focusflow's control — not
-// the same as 'completed', which only `focusflow done` sets). No-op for
+// flips it to 'finished' when the run exited cleanly (the wrapper recorded
+// status 0) or 'dead' otherwise (a crash/kill outside focusflow's control —
+// not the same as 'completed', which only `focusflow done` sets). No-op for
 // tasks with no in-flight auto run.
 func refreshAutoRunStatus(db *sql.DB, task *store.Task) error {
 	if !task.AutoRunStatus.Valid || task.AutoRunStatus.String != "running" || !task.AutoRunPID.Valid {
@@ -621,14 +626,51 @@ func refreshAutoRunStatus(db *sql.DB, task *store.Task) error {
 	}
 	proc, err := os.FindProcess(int(task.AutoRunPID.Int64))
 	if err != nil {
-		return markAutoRunDead(db, task.Slug)
+		return markAutoRunEnded(db, task)
 	}
 	// On Unix, FindProcess always succeeds; signal 0 is the standard
 	// liveness probe — it errors if the process doesn't exist.
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return markAutoRunDead(db, task.Slug)
+		return markAutoRunEnded(db, task)
 	}
 	return nil
+}
+
+// headlessWrapper runs "$0" "$@" (claude and its arguments) and writes its exit status to
+// $FOCUSFLOW_EXIT_FILE when it ends. Signals sent to the wrapper are passed on to claude.
+const headlessWrapper = `"$0" "$@" & c=$!
+trap 'kill -TERM "$c" 2>/dev/null' TERM INT HUP
+wait "$c"; s=$?
+while kill -0 "$c" 2>/dev/null; do wait "$c"; s=$?; done
+echo "$s" > "$FOCUSFLOW_EXIT_FILE"
+exit "$s"`
+
+func exitFileFor(logPath string) string { return logPath + ".exit" }
+
+// runExitCode reads the exit status the wrapper recorded, or -1 when there is none (the run was
+// killed too hard to record it, or predates the wrapper).
+func runExitCode(logPath string) int {
+	b, err := os.ReadFile(exitFileFor(logPath))
+	if err != nil {
+		return -1
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+func markAutoRunEnded(db *sql.DB, task *store.Task) error {
+	if task.AutoRunLog.Valid && runExitCode(task.AutoRunLog.String) == 0 {
+		now := store.NowISO()
+		_, err := db.Exec(
+			`UPDATE tasks SET auto_run_status='finished', auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
+			now, now, task.Slug,
+		)
+		return err
+	}
+	return markAutoRunDead(db, task.Slug)
 }
 
 func markAutoRunDead(db *sql.DB, slug string) error {

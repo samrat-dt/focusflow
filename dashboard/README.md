@@ -1,16 +1,23 @@
-# Focusflow dashboard
+# Focusflow app
 
-The dashboard for focusflow: a board of your work in five lanes (Next · In progress · Paused · Review · Done), a
-Projects screen with expandable subtasks, an Archive, and an Inbox for talking to tasks and to each project's
-coordinator. Everything it does goes through the `focusflow` CLI; see `JOURNEYS.md` for how the screens fit together.
+The Focusflow app (served here, and wrapped by `Focusflow.app`): a calm, light workspace for handing work to Claude
+and staying in charge of it. Everything it changes goes through the `focusflow` CLI.
 
-- **Stages** are focusflow's own: backlog · next · in progress · paused · review · done. Whether a terminal is open
-  (⌨) or a headless run is going (⚙) is a separate marker on the card.
-- **Nothing opens a terminal by itself.** Start, Resume, Focus and "Open terminal" do, because you clicked them.
-  Messages run headlessly. Pause, Send to review, Approve and Next only change status.
-- **Projects** have one permanent coordinator session each: message a project and it decides whether the ask belongs
-  to an existing subtask or needs a new one. Schedule a project to have it reviewed on a rhythm.
-- Search (`/`), a stats strip, and a health chip (`focusflow doctor`) are always on screen.
+- **Home** ranks everything that needs you (questions, reviews, stopped or stuck runs, overdue and waiting items),
+  says why each is there, and lets you reply, approve or snooze in place.
+- **Tasks** as a board or a list (group, filter, drag between stages, bulk actions); a **task page** with editable
+  properties, a live run panel, and tabs for Conversation, Memory, Brief and Notes.
+- **Projects** with progress, a page per project, and each project's **assistant**.
+- **Inbox** (two panes), **Memory**, **Archive**, **Settings**, and **About & Help** (product story, docs,
+  troubleshooting). ⌘K searches and runs anything.
+- **Background runs**: messaging a task that is not open in a terminal starts `focusflow do --auto`, which resumes
+  its session; the run is tracked, can be stopped, and is flagged when it goes quiet or fails.
+
+The front end is dependency-free ES modules in `public/ui/` (design tokens and components in `public/ui/css/app.css`,
+Inter bundled in `public/ui/fonts/`). The previous screen is still served at `/classic` until it is removed.
+
+Check the real journeys end to end (headless Chrome, a throwaway sandbox, a fake `claude`): `npm run e2e`
+(or `make e2e` from the repo root).
 
 ## How it works
 
