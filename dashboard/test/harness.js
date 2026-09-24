@@ -32,7 +32,7 @@ const DEFAULT_TASKS = () => [
 // `focusflow message` with a new id and everything else with empty output.
 // `sessions`: map slug -> { sessionId, harness } | undefined, backs the `readSession` DI seam.
 // `resume`: overrides the fake `resumeRun` call; defaults to a successful `{ pid: 1 }`.
-export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, resume, activityHome, projectsFull = [], owners = [], detachedCalls } = {}) {
+export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, resume, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder } = {}) {
   const calls = [];
   const resumeCalls = [];
   const inboxRows = { rows: [], fail: null };
@@ -65,6 +65,7 @@ export async function makeApp({ tasks, live = ['running'], focusflow, workDir = 
     readProjects: () => [],
     readProjectsFull: () => projectsFull,
     readOwners: () => owners,
+    ...(pickFolder ? { pickFolder } : { pickFolder: async () => { throw new Error('no dialog in tests'); } }),
     focusRunDetached: async (args, opts) => { (detachedCalls ?? []).push({ args, opts }); },
     ...(notifier ? { notifier } : {}),
     ...(activityHome !== undefined ? { activityHome } : {}),

@@ -11,6 +11,7 @@ import { focusEnv } from './focus-env.js';
 import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession } from './focus-reader.js';
 import { spawn } from 'node:child_process';
 import { buildOverview, buildArchive } from './hierarchy.js';
+import { runPickFolder } from './pick-folder.js';
 import { runResume } from './resume-run.js';
 import { isWorking } from './activity.js';
 import { validateName, slugify, uniqueSlug, thinBrief, isStubBrief, CaptureError, MAX_NOTE } from './capture.js';
@@ -91,6 +92,7 @@ function readJson(req) {
 export function createApp({
   config, store, readTasks, malformed = 0, now = () => new Date(), notifier: injectedNotifier = null,
   focusRun = (args, { env, timeoutMs }) => runFocus(args, { focusBin: config.focusBin, env, timeoutMs }),
+  pickFolder = opts => runPickFolder(opts),
   readProjects = () => readFocusProjects({ focusRoot: config.focusRoot, dbName: config.focusDbName }),
   readProjectsFull = () => readFocusProjectsFull({ focusRoot: config.focusRoot, dbName: config.focusDbName }),
   readOwners = () => readFocusOwners({ focusRoot: config.focusRoot, dbName: config.focusDbName }),
@@ -318,7 +320,7 @@ export function createApp({
       // First-ever run: only focusflow can start this cleanly.
       let error = null;
       try {
-        await runFocusCmd(['do', '--auto', slug, '--with', headlessBody(c.text)], FOCUSFLOW_DO_TIMEOUT_MS);
+        await runFocusCmd(['do', slug, '--auto', '--with', headlessBody(c.text)], FOCUSFLOW_DO_TIMEOUT_MS);
       } catch (err) {
         error = err.message;
       }
@@ -622,6 +624,16 @@ export function createApp({
     return { ...r, agent, fanned_out: fanned };
   }
 
+  // One native folder dialog at a time; a second click while one is open just says so.
+  let picking = false;
+  async function pickFolderNow(body) {
+    if (picking) throw new HttpError(409, 'a folder dialog is already open');
+    const start = typeof body.start === 'string' ? body.start : undefined;
+    const prompt = typeof body.prompt === 'string' ? body.prompt.slice(0, 120) : undefined;
+    picking = true;
+    try { return await pickFolder({ start, prompt }); } catch (err) { throw new HttpError(502, err.message); } finally { picking = false; }
+  }
+
   async function newProject(body) {
     const np = validateNewProject(body);
     let known;
@@ -785,6 +797,10 @@ export function createApp({
       if (pm[2] === 'action') return json(res, 200, await serial(() => projectAction(pslug, body)));
       if (pm[2] === 'message') return json(res, 200, await serial(() => projectMessage(pslug, body)));
       return json(res, 200, await serial(() => draftSubtask(pslug, body)));
+    }
+    if (pathname === '/api/pick-folder') {
+      if (!need('POST')) return;
+      return json(res, 200, await pickFolderNow(await readJson(req)));
     }
     if (pathname === '/api/projects/new') {
       if (!need('POST')) return;

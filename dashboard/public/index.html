@@ -116,7 +116,10 @@
       </label>
       <div class="row">
         <label class="field">Work directory
-          <input id="cap-np-dir" autocomplete="off" spellcheck="false">
+          <span class="pick-row">
+            <input id="cap-np-dir" autocomplete="off" spellcheck="false">
+            <button type="button" class="pick-btn" data-target="cap-np-dir">Choose folder…</button>
+          </span>
         </label>
         <label class="field">Project priority
           <select id="cap-np-priority">
@@ -147,7 +150,10 @@
     </label>
     <div class="row">
       <label class="field">Work directory
-        <input id="np-dir" autocomplete="off" spellcheck="false" placeholder="/absolute/path">
+        <span class="pick-row">
+          <input id="np-dir" autocomplete="off" spellcheck="false" placeholder="/absolute/path">
+          <button type="button" class="pick-btn" data-target="np-dir">Choose folder…</button>
+        </span>
       </label>
       <label class="field">Priority
         <select id="np-priority">
@@ -157,6 +163,7 @@
         </select>
       </label>
     </div>
+    <div class="muted pick-hint">Choose an existing folder, or make a new one in the dialog (the “New Folder” button).</div>
     <div id="np-error" class="form-error" role="alert" hidden></div>
     <div class="dialog-actions">
       <button type="button" id="np-cancel">Cancel</button>

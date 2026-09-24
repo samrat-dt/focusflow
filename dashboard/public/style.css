@@ -206,3 +206,9 @@ dialog h2 { margin: 0 0 14px; font-size: 17px; }
 .mini .card-actions { padding-bottom: 6px; }
 .mini .card-title { font-size: 13px; }
 .mini .board-note { display: none; }
+
+/* ---- folder chooser ---- */
+.pick-row { display: flex; gap: 6px; }
+.pick-row input { flex: 1; min-width: 0; }
+.pick-btn { white-space: nowrap; }
+.pick-hint { font-size: 12px; margin: -4px 0 12px; }

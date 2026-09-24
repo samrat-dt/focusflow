@@ -106,7 +106,7 @@ test('headless with confirm runs `focusflow do --auto` with the text and headles
   const r = await send('todo', { text: 'Run the suite', mode: 'headless', confirm: true });
   assert.equal(r.status, 200);
   assert.deepEqual(r.json(), { ok: true, mode: 'headless' });
-  assert.deepEqual(doCalls().map(c => c.args), [['do', '--auto', 'todo', '--with', `Run the suite${HEADLESS_CUE}`]]);
+  assert.deepEqual(doCalls().map(c => c.args), [['do', 'todo', '--auto', '--with', `Run the suite${HEADLESS_CUE}`]]);
   assert.equal(doCalls()[0].opts.env.CLAUDE_CODE_SESSION_ID, undefined);
   assert.equal(messageCalls().length, 0, 'the text is never delivered a second way');
 });
@@ -259,4 +259,13 @@ test('headless text is validated like queue text', async () => {
   assert.equal((await send('going', { text: '--help', mode: 'headless', confirm: true })).status, 400);
   assert.equal((await send('going', { text: 'x'.repeat(381), mode: 'headless', confirm: true })).status, 400);
   assert.equal(doCalls().length, 0);
+});
+
+test('the headless start puts the task ref BEFORE its flags (focusflow do <ref> --auto ...)', async () => {
+  h = await makeApp({ live: [], tasks: undefined });
+  await send('todo', { text: 'go', mode: 'headless', confirm: true });
+  const a = doCalls()[0].args;
+  assert.equal(a[0], 'do');
+  assert.ok(!a[1].startsWith('-'), `the ref must come first, got ${JSON.stringify(a)}`);
+  assert.deepEqual(a.slice(1, 3), ['todo', '--auto']);
 });

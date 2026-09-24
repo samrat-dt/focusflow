@@ -403,6 +403,27 @@ function openNewProject() {
   npDlg.showModal();
   $('np-name').focus();
 }
+// "Choose folder…": the native macOS chooser (it has a New Folder button), opened by the server on this
+// machine. Cancelling leaves the field as it was.
+async function chooseFolder(btn) {
+  const input = $(btn.dataset.target);
+  const showError = btn.dataset.target === 'np-dir' ? npError : capError;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Waiting for the dialog…';
+  showError('');
+  try {
+    const r = await api('/api/pick-folder', 'POST', { start: input.value.trim() || undefined, prompt: 'Choose or create the working folder' });
+    if (r.path) { input.value = r.path; input.dispatchEvent(new Event('input', { bubbles: true })); }
+  } catch (err) {
+    showError(`Could not open the folder dialog: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+for (const b of document.querySelectorAll('.pick-btn')) b.addEventListener('click', () => chooseFolder(b));
+
 $('np-cancel').addEventListener('click', () => npDlg.close());
 $('np-form').addEventListener('submit', async e => {
   e.preventDefault();
