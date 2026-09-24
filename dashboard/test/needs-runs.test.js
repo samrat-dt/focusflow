@@ -28,14 +28,16 @@ test('needs-you gathers review, questions, overdue, waiting and failed runs, urg
   ];
   const n = buildNeeds({ tasks, messages });
   assert.deepEqual(n.items.map(i => `${i.kind}:${i.slug}`), [
-    'question:urgent', 'failed:dead', 'question:ask', 'review:rev', 'overdue:late', 'waiting:wait',
+    'question:urgent', 'question:ask', 'failed:dead', 'review:rev', 'overdue:late', 'waiting:wait',
   ]);
-  assert.deepEqual(n.counts, { failed: 1, question: 2, review: 1, overdue: 1, waiting: 1 });
+  assert.deepEqual(n.counts, { failed: 1, question: 2, review: 1, stalled: 0, overdue: 1, waiting: 1 });
   assert.equal(n.total, 6);
   assert.equal(n.badge, 4, 'the Dock badge counts what needs an answer or an approval');
   assert.equal(n.items[0].urgent, true);
+  assert.ok(n.items[0].reasons.includes('Marked urgent'));
+  assert.ok(n.items.every(i => typeof i.score === 'number' && i.key === `${i.kind}:${i.slug}`));
   assert.equal(n.items.find(i => i.slug === 'ask').detail, 'Square or 4:5?');
-  assert.deepEqual(buildNeeds({ tasks: [], messages: [] }), { items: [], counts: { failed: 0, question: 0, review: 0, overdue: 0, waiting: 0 }, total: 0, badge: 0 });
+  assert.deepEqual(buildNeeds({ tasks: [], messages: [] }), { items: [], counts: { failed: 0, question: 0, review: 0, stalled: 0, overdue: 0, waiting: 0 }, total: 0, badge: 0, hidden: [] });
 });
 
 test('a coordinator question is a question but never a review item', () => {

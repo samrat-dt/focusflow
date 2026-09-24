@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS messages (device TEXT NOT NULL, flow_id TEXT NOT NULL, slug TEXT, direction TEXT NOT NULL, body TEXT NOT NULL, reply_to TEXT, urgent INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL, seen_read INTEGER NOT NULL DEFAULT 0, delivered_at TEXT, PRIMARY KEY (device, flow_id));
 CREATE TABLE IF NOT EXISTS thread_read (device TEXT NOT NULL, slug TEXT NOT NULL, through TEXT NOT NULL, PRIMARY KEY (device, slug));
 CREATE TABLE IF NOT EXISTS headless_runs (slug TEXT PRIMARY KEY, first_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attention (key TEXT PRIMARY KEY, fp TEXT NOT NULL, until TEXT, dismissed INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attention_acts (id TEXT PRIMARY KEY, key TEXT NOT NULL, fp TEXT NOT NULL, kind TEXT NOT NULL, project TEXT, waited_seconds INTEGER NOT NULL, at TEXT NOT NULL, UNIQUE (key, fp));
 `;
 
 const messageRow = r => ({
@@ -93,6 +95,18 @@ export class Store {
       case 'message.delivered':
         this.q.putDelivered.run(p.delivered_at, e.device, p.flow_id);
         break;
+      case 'attention.snoozed':
+        this.db.prepare('INSERT OR REPLACE INTO attention (key, fp, until, dismissed, at) VALUES (?, ?, ?, 0, ?)').run(p.key, p.fp ?? '', p.until ?? null, e.event_time);
+        break;
+      case 'attention.dismissed':
+        this.db.prepare('INSERT OR REPLACE INTO attention (key, fp, until, dismissed, at) VALUES (?, ?, NULL, 1, ?)').run(p.key, p.fp ?? '', e.event_time);
+        break;
+      case 'attention.restored':
+        this.db.prepare('DELETE FROM attention WHERE key = ?').run(p.key);
+        break;
+      case 'attention.acted':
+        this.db.prepare('INSERT OR IGNORE INTO attention_acts (id, key, fp, kind, project, waited_seconds, at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, p.key, p.fp ?? '', p.kind, p.project ?? null, Math.max(0, Math.round(p.waited_seconds ?? 0)), e.event_time);
+        break;
       case 'message.read':
         this.q.putRead.run(e.device, p.slug, p.through);
         break;
@@ -156,6 +170,18 @@ export class Store {
       AND delivered_at IS NULL AND flow_id NOT LIKE 'out:%' AND at >= ? ORDER BY at`).all(device, sinceIso).map(r => ({ slug: r.slug, flow_id: r.flow_id }));
   }
 
+  attentionRules() {
+    return new Map(this.db.prepare('SELECT key, fp, until, dismissed FROM attention').all().map(r => [r.key, { fp: r.fp, until: r.until, dismissed: !!r.dismissed }]));
+  }
+
+  hasActed(key, fp) {
+    return !!this.db.prepare('SELECT 1 AS x FROM attention_acts WHERE key = ? AND fp = ?').get(key, fp);
+  }
+
+  attentionActs() {
+    return this.db.prepare('SELECT kind, project, waited_seconds FROM attention_acts ORDER BY at DESC LIMIT 500').all().map(r => ({ ...r }));
+  }
+
   everHeadless(slug) {
     return !!this.db.prepare('SELECT 1 AS x FROM headless_runs WHERE slug = ?').get(slug);
   }
@@ -180,6 +206,8 @@ export class Store {
       instances: all('SELECT device, event_time, payload FROM instances ORDER BY device', r => ({ device: r.device, event_time: r.event_time, payload: JSON.parse(r.payload) })),
       messages: all('SELECT device, flow_id, slug, direction, body, reply_to, urgent, at, seen_read, delivered_at FROM messages ORDER BY device, flow_id', r => ({ ...r })),
       thread_read: all('SELECT device, slug, through FROM thread_read ORDER BY device, slug', r => ({ ...r })),
+      attention: all('SELECT key, fp, until, dismissed, at FROM attention ORDER BY key', r => ({ ...r })),
+      attention_acts: all('SELECT id, key, fp, kind, project, waited_seconds, at FROM attention_acts ORDER BY id', r => ({ ...r })),
       headless_runs: all('SELECT slug, first_at FROM headless_runs ORDER BY slug', r => ({ slug: r.slug, first_at: r.first_at })),
       anomalies: anomalies ? anomalies.value : 0,
     };

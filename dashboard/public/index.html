@@ -87,6 +87,7 @@
   <div class="drawer-run" id="drawer-run" hidden></div>
   <div class="drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Task sections">
     <button type="button" role="tab" data-tab="chat" aria-selected="true">Chat</button>
+    <button type="button" role="tab" data-tab="memory" aria-selected="false">Memory</button>
     <button type="button" role="tab" data-tab="details" aria-selected="false">Details</button>
     <button type="button" role="tab" data-tab="brief" aria-selected="false">Brief</button>
     <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes <span class="muted" id="notes-count"></span></button>
@@ -121,6 +122,7 @@
     <div id="drawer-details" class="tab-panel" hidden></div>
     <div id="drawer-brief" class="tab-panel" hidden></div>
     <div id="drawer-notes" class="tab-panel" hidden></div>
+    <div id="drawer-memory" class="tab-panel" hidden></div>
   </div>
 </aside>
 
@@ -221,6 +223,8 @@
   <dl class="legend-list">
     <dt>⌨ Open in terminal</dt><dd>A terminal you opened is attached to the task.</dd>
     <dt>⚙ Headless run</dt><dd>Claude is working in the background. Open the task to see what it is doing, or cancel it.</dd>
+    <dt>Memory</dt><dd>Everything you tell a task is remembered and given to every future session. Pin it, apply it to the whole project, or forget it from the task's Memory tab.</dd>
+    <dt>Later…</dt><dd>Snooze anything on Needs you; it comes back on time, or as soon as something new happens.</dd>
     <dt>! W D</dt><dd>Stale (no activity), Waiting on someone, Due or overdue.</dd>
   </dl>
   <h3>Shortcuts</h3>

@@ -68,6 +68,14 @@ func Run(args []string) int {
 		return cmdHook(rest)
 	case "message", "msg":
 		return cmdMessage(rest)
+	case "remember":
+		return cmdRemember(rest)
+	case "memories":
+		return cmdMemories(rest)
+	case "forget":
+		return cmdForget(rest)
+	case "memory":
+		return cmdMemory(rest)
 	case "broadcast", "post":
 		return cmdBroadcast(rest)
 	case "dashboard":

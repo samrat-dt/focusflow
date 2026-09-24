@@ -372,7 +372,8 @@ function setView(name) {
 
 
 // ---- Needs you ----
-const KIND_LABEL = { review: 'Ready for review', question: 'Question for you', failed: 'Run stopped', overdue: 'Overdue', waiting: 'Waiting' };
+const KIND_LABEL = { review: 'Ready for review', question: 'Question for you', failed: 'Run stopped', stalled: 'Stuck?', overdue: 'Overdue', waiting: 'Waiting' };
+let showHidden = false;
 
 async function loadNeeds() {
   needs = await api('/api/needs-you');
@@ -399,15 +400,62 @@ function needsItem(i) {
   const btn = (text, fn, cls = '') => { const b = el('button', { class: `card-btn ${cls}`.trim(), text, attrs: { type: 'button', 'aria-label': `${text}: ${i.name}`, 'data-key': `need:${i.kind}:${i.slug}:${text}` } }); b.addEventListener('click', () => fn(b)); return b; };
   if (i.kind === 'review' && t && !isAgent(t)) acts.push(btn('Approve', () => stageAction(i.slug, 'approve'), 'primary'));
   acts.push(btn(i.kind === 'question' ? 'Reply' : 'Open', b => openDrawer(i.slug, b), i.kind === 'question' ? 'primary' : ''));
+  if (i.kind === 'stalled' && t) acts.push(btn('Stop run', () => stageAction(i.slug, 'pause')));
+  acts.push(snoozeMenu(i));
   const kind = KIND_LABEL[i.kind] + (i.urgent ? ' · urgent' : '');
   return el('div', { class: `need k-${i.kind}${i.urgent ? ' urgent' : ''}` }, [
     el('div', { class: 'need-main' }, [
       el('div', { class: 'need-kind', text: `${kind}${i.project ? ` · ${i.project}` : ''}${i.at ? ` · ${Logic.humanTime(i.at)}` : ''}` }),
-      el('div', { class: 'need-title', text: i.agent ? `${i.name} (project coordinator)` : i.name }),
+      el('div', { class: 'need-title', text: i.agent ? `${i.name} (project assistant)` : i.name }),
       el('div', { class: 'need-detail', text: i.detail }),
+      ...(i.reasons?.length ? [el('div', { class: 'need-why', text: `Why here: ${i.reasons.join(' · ')}` })] : []),
     ]),
     el('div', { class: 'need-actions' }, acts),
   ]);
+}
+
+async function attention(op, body, msg) {
+  try {
+    await api(`/api/needs-you/${op}`, 'POST', body);
+    if (msg) toast(msg);
+  } catch (err) { toast(`Could not do that. ${say(err)}`, true); }
+  await loadNeeds();
+  renderNeeds(true);
+}
+
+// Snooze: later today, tomorrow morning, or until something new happens; or dismiss for good.
+function snoozeMenu(i) {
+  const d = el('details', { class: 'menu' });
+  d.append(el('summary', { class: 'card-btn', text: 'Later…', attrs: { 'aria-label': `Snooze: ${i.name}` } }));
+  const opt = (text, fn) => { const b = el('button', { class: 'menu-item', text, attrs: { type: 'button' } }); b.addEventListener('click', () => { d.open = false; fn(); }); return b; };
+  d.append(el('div', { class: 'menu-list' }, [
+    opt('In 1 hour', () => attention('snooze', { key: i.key, fp: i.fp, preset: '1h' }, 'Snoozed for an hour.')),
+    opt('In 3 hours', () => attention('snooze', { key: i.key, fp: i.fp, preset: '3h' }, 'Snoozed for three hours.')),
+    opt('Tomorrow morning', () => attention('snooze', { key: i.key, fp: i.fp, preset: 'tomorrow' }, 'Snoozed until tomorrow at 8.')),
+    opt('Until something changes', () => attention('snooze', { key: i.key, fp: i.fp, preset: 'change' }, 'Hidden until something new happens.')),
+    opt('Dismiss', () => attention('dismiss', { key: i.key, fp: i.fp }, 'Dismissed. It comes back if something new happens.')),
+  ]));
+  return d;
+}
+
+function hiddenList() {
+  const h = needs.hidden ?? [];
+  if (!h.length) return [];
+  const toggle = el('button', { class: 'card-btn', text: showHidden ? 'Hide' : 'Show', attrs: { type: 'button' } });
+  toggle.addEventListener('click', () => { showHidden = !showHidden; renderNeeds(true); });
+  const out = [el('div', { class: 'needs-hidden muted' }, [el('span', { text: `${h.length} snoozed or dismissed` }), toggle])];
+  if (showHidden) {
+    for (const i of h) {
+      const back = el('button', { class: 'card-btn', text: 'Bring back', attrs: { type: 'button' } });
+      back.addEventListener('click', () => attention('restore', { key: i.key }));
+      const when = i.dismissed ? 'dismissed' : i.snoozed_until ? `until ${Logic.humanTime(i.snoozed_until).replace(' ago', '')}` : 'until something changes';
+      out.push(el('div', { class: 'need snoozed' }, [
+        el('div', { class: 'need-main' }, [el('div', { class: 'need-kind', text: `${KIND_LABEL[i.kind]} · ${when}` }), el('div', { class: 'need-title', text: i.name })]),
+        el('div', { class: 'need-actions' }, [back]),
+      ]));
+    }
+  }
+  return out;
 }
 
 function runRow(t) {
@@ -429,7 +477,7 @@ function renderNeeds(force = false) {
   const box = $('needs');
   const running = effectiveTasks().filter(t => t.headless_running && !isAgent(t));
   const items = needs.items.filter(i => !pending.has(`task:${i.slug}`));
-  const fp = Logic.fingerprint([items, running.map(t => t.slug), [...runInfos].map(([k, v]) => [k, v.activity?.summary, Math.floor((v.elapsed_seconds ?? 0) / 10)]), tasks.length]);
+  const fp = Logic.fingerprint([items, needs.hidden, showHidden, running.map(t => t.slug), [...runInfos].map(([k, v]) => [k, v.activity?.summary, Math.floor((v.elapsed_seconds ?? 0) / 10)]), tasks.length]);
   if (!force && box.dataset.fp === fp) return;
   box.dataset.fp = fp;
   keepFocus(() => {
@@ -447,6 +495,7 @@ function renderNeeds(force = false) {
     } else {
       for (const i of items) box.append(needsItem(i));
     }
+    box.append(...hiddenList());
     if (running.length) {
       box.append(el('h2', { class: 'needs-h', text: 'Running without you' }));
       for (const t of running) box.append(runRow(t));
@@ -1018,12 +1067,68 @@ async function fillDrawer(slug) {
 }
 
 function showTab(name) {
-  activeTab = ['chat', 'details', 'brief', 'notes'].includes(name) ? name : 'chat';
+  activeTab = ['chat', 'memory', 'details', 'brief', 'notes'].includes(name) ? name : 'chat';
   for (const b of document.querySelectorAll('#drawer-tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === activeTab));
   if (chatHome === 'drawer') $('chat').hidden = activeTab !== 'chat';
   $('drawer-details').hidden = activeTab !== 'details';
   $('drawer-brief').hidden = activeTab !== 'brief';
   $('drawer-notes').hidden = activeTab !== 'notes';
+  $('drawer-memory').hidden = activeTab !== 'memory';
+  if (activeTab === 'memory') loadMemory().catch(() => {});
+}
+
+// ---- memory: what this task (and its project) already knows ----
+const MEMORY_KIND = { answer: 'Your answer', instruction: 'Your instruction', decision: 'Decision', note: 'Note' };
+async function memoryAction(id, op) {
+  try { await api(`/api/memories/${id}/${op}`, 'POST', {}); } catch (err) { toast(`Could not ${op} that. ${say(err)}`, true); }
+  await loadMemory();
+}
+function memoryRow(m) {
+  const b = (text, op) => { const x = el('button', { class: 'card-btn', text, attrs: { type: 'button' } }); x.addEventListener('click', () => { x.disabled = true; memoryAction(m.id, op); }); return x; };
+  const where = m.scope === 'global' ? 'Everywhere' : m.scope === 'project' ? `Whole project${m.project ? ` (${m.project})` : ''}` : 'This task';
+  return el('div', { class: 'memory' + (m.pinned ? ' pinned' : '') }, [
+    el('div', { class: 'need-kind', text: `${MEMORY_KIND[m.kind] ?? m.kind} · ${where} · ${Logic.humanTime(m.created_at)}${m.pinned ? ' · pinned' : ''}` }),
+    ...(m.question ? [el('div', { class: 'memory-q muted', text: `Asked: ${m.question}` })] : []),
+    el('div', { class: 'memory-body', text: m.body }),
+    el('div', { class: 'need-actions' }, [
+      b(m.pinned ? 'Unpin' : 'Pin', m.pinned ? 'unpin' : 'pin'),
+      ...(m.scope !== 'global' ? [b(m.scope === 'task' && m.project ? 'Apply to project' : 'Apply everywhere', 'promote')] : []),
+      b('Forget', 'forget'),
+    ]),
+  ]);
+}
+async function loadMemory() {
+  const slug = openSlug;
+  const t = taskOf(slug);
+  if (!slug || !t) return;
+  const [own, proj] = await Promise.all([
+    api(`/api/memories?task=${encodeURIComponent(slug)}`),
+    t.project ? api(`/api/memories?project=${encodeURIComponent(t.project)}`) : Promise.resolve({ memories: [] }),
+  ]);
+  if (slug !== openSlug) return;
+  const seen = new Set(own.memories.map(m => m.id));
+  const rest = proj.memories.filter(m => !seen.has(m.id) && (m.scope === 'project' || m.kind === 'answer' || m.kind === 'decision'));
+  const input = el('input', { class: 'inline-input', attrs: { maxlength: '380', placeholder: 'Remember something for this task…', 'aria-label': 'Remember something' } });
+  const scope = el('select', { class: 'inline-select', attrs: { 'aria-label': 'Applies to' } }, [
+    el('option', { text: 'This task', attrs: { value: 'task' } }),
+    ...(t.project ? [el('option', { text: 'Whole project', attrs: { value: 'project' } })] : []),
+    el('option', { text: 'Everywhere', attrs: { value: 'global' } }),
+  ]);
+  const form = el('form', { class: 'inline-form' }, [input, scope, el('button', { text: 'Remember', attrs: { type: 'submit' } })]);
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!input.value.trim()) return;
+    try {
+      await api('/api/memories/new', 'POST', { text: input.value.trim(), scope: scope.value, task: slug, project: t.project ?? undefined });
+      toast('Remembered. Every future session will know this.');
+    } catch (err) { toast(`Could not remember that. ${say(err)}`, true); }
+    await loadMemory();
+  });
+  const intro = el('div', { class: 'muted memory-intro', text: 'Everything you tell this task is remembered and given to every future session, so you never have to say it twice.' });
+  const list = own.memories.length + rest.length
+    ? [...own.memories.map(memoryRow), ...(rest.length ? [el('h3', { class: 'needs-h', text: 'From the rest of the project' }), ...rest.map(memoryRow)] : [])]
+    : [el('div', { class: 'muted', text: 'Nothing remembered yet. Answers and instructions you send will appear here.' })];
+  $('drawer-memory').replaceChildren(intro, form, ...list);
 }
 for (const b of document.querySelectorAll('#drawer-tabs button')) b.addEventListener('click', () => showTab(b.dataset.tab));
 

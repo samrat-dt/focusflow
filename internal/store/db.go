@@ -272,7 +272,7 @@ func dsnFor(path string) string {
 // open. From here on, a schema change MUST be a new entry in
 // versionedMigrations (never an edit to schemaDDL alone — an already-
 // stamped database would skip it) and bump SchemaVersion.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // versionedMigrations[i] upgrades a database from version i+1 to i+2 (the
 // baseline, version 1, is applied by ensureSchema). Each step runs on one
@@ -282,6 +282,7 @@ const SchemaVersion = 3
 var versionedMigrations = []func(ctx context.Context, conn *sql.Conn) error{
 	migrateV2Statuses,
 	migrateV3ProjectAgentsAndTerminal,
+	migrateV4Memories,
 }
 
 // ErrSchemaTooNew is returned when the database was written by a newer

@@ -326,3 +326,21 @@ details.fold > summary { cursor: pointer; color: var(--muted); font-size: 13px; 
 .legend-list { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; font-size: 14px; margin: 4px 0 12px; }
 .legend-list dt { font-weight: 600; } .legend-list dd { margin: 0; }
 dialog h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 4px; }
+
+/* attention + memory */
+.need-why { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.need.snoozed { opacity: .75; }
+.needs-hidden { display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.need.k-stalled { border-left-color: var(--due); }
+.menu { position: relative; }
+.menu > summary { list-style: none; display: inline-flex; align-items: center; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 200px; display: flex; flex-direction: column; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
+.menu-item { border: 0; text-align: left; border-radius: 6px; background: none; }
+.menu-item:hover { background: var(--bg); }
+.memory { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 8px; }
+.memory.pinned { border-color: var(--accent); }
+.memory-q { font-size: 13px; margin-top: 2px; }
+.memory-body { margin: 4px 0 6px; overflow-wrap: anywhere; }
+.memory-intro { font-size: 13px; margin-bottom: 10px; }
+#drawer-memory .inline-form { margin-bottom: 6px; }

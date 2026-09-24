@@ -10,6 +10,7 @@ import { runFocus } from './focus-run.js';
 import { focusEnv } from './focus-env.js';
 import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
 import { buildNeeds, buildSince } from './needs.js';
+import { learnedBias, createGate } from './attention.js';
 import { lastActivity } from './activity.js';
 import { tailLog, pidAlive } from './runs.js';
 import { spawn } from 'node:child_process';
@@ -128,7 +129,10 @@ export function createApp({
   mirror = null,
   sync = null,
 }) {
-  const notifier = injectedNotifier ?? createNotifier({ enabled: config.tunables.notifications !== false });
+  const rawNotifier = injectedNotifier ?? createNotifier({ enabled: config.tunables.notifications !== false });
+  // Urgent news always gets through; everything else waits out quiet hours and arrives as one summary.
+  const gate = createGate({ notify: a => rawNotifier.notify(a), quietHours: config.tunables.quiet_hours ?? '22:00-08:00', now });
+  const notifier = { notify: a => gate.notify(a), status: () => rawNotifier.status() };
   const status = { lastTickAt: null, lastError: null, mirrorError: null, live: new Set(), working: new Set(), malformed, runStates: null };
 
   // Idle vs working, for the (small) currently-live set only, claude harness only (the transcript
@@ -194,6 +198,7 @@ export function createApp({
       status.lastTickAt = now();
     }
     if (!result.skipped) noteRunTransitions();
+    try { gate.flush(); } catch { /* a banner is a nicety */ }
     let mirrored = 0;
     if (mirror) {
       try {
@@ -242,9 +247,71 @@ export function createApp({
     };
   }
 
+  // A running task's latest sign of life: its newest transcript step, else when the run started.
+  function runActivityMap(tasks) {
+    const out = new Map();
+    for (const t of tasks) {
+      if (t.auto_run_status !== 'running') continue;
+      try {
+        const row = readRun({ slug: t.slug });
+        if (!row) continue;
+        const act = row.sessionId && row.workDir ? lastActivity({ workDir: row.workDir, sessionId: row.sessionId, home: activityHome }) : null;
+        const at = act?.at ?? row.started;
+        if (at) out.set(t.slug, at);
+      } catch { /* unknown: never flagged as stalled */ }
+    }
+    return out;
+  }
+
   function needsYou() {
     const tasks = store.tasks().map(view);
-    return buildNeeds({ tasks, messages: store.messages(config.device) });
+    return buildNeeds({
+      tasks, messages: store.messages(config.device), now: now(),
+      rules: store.attentionRules(), bias: learnedBias(store.attentionActs()),
+      runActivity: runActivityMap(tasks), stallMs: (config.tunables.stall_minutes ?? 15) * 60000,
+    });
+  }
+
+  // The human just dealt with `slug`: remember how long each of its open items had waited, once per
+  // item, so the ranking learns what this person handles fast and what they leave.
+  // Returns a function to call once the action succeeded (the items are read before they disappear).
+  function noteActed(slug, kinds) {
+    let items = [];
+    try { items = needsYou().items.filter(i => i.slug === slug && kinds.includes(i.kind) && !store.hasActed(i.key, i.fp)); } catch { /* best effort */ }
+    return () => {
+      for (const i of items) {
+        const waited = Math.max(0, (now().getTime() - Date.parse(i.at)) / 1000);
+        try { record('attention.acted', `task:${slug}`, { key: i.key, fp: i.fp, kind: i.kind, project: i.project, waited_seconds: Number.isFinite(waited) ? Math.round(waited) : 0 }); } catch { /* best effort */ }
+      }
+    };
+  }
+
+  const NEED_KEY = /^(question|failed|review|stalled|overdue|waiting):[a-z0-9][a-z0-9-]*$/;
+  // Snooze presets resolve against local time: "tomorrow" means 8am tomorrow.
+  function snoozeUntil(body) {
+    const n = now();
+    switch (body.preset) {
+      case '1h': return new Date(n.getTime() + 3600000).toISOString();
+      case '3h': return new Date(n.getTime() + 3 * 3600000).toISOString();
+      case 'tomorrow': { const d = new Date(n); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.toISOString(); }
+      case 'change': return null;
+      case undefined: break;
+      default: throw new HttpError(400, 'preset must be 1h, 3h, tomorrow or change');
+    }
+    if (body.until === null || body.until === undefined) return null;
+    if (Number.isNaN(Date.parse(body.until))) throw new HttpError(400, 'until must be an ISO timestamp');
+    return new Date(body.until).toISOString();
+  }
+
+  function attentionAction(op, body) {
+    if (typeof body.key !== 'string' || !NEED_KEY.test(body.key)) throw new HttpError(400, 'bad key');
+    const subject = `task:${body.key.split(':')[1]}`;
+    if (op === 'restore') { record('attention.restored', subject, { key: body.key }); return { ok: true }; }
+    if (typeof body.fp !== 'string' || body.fp.length > 64) throw new HttpError(400, 'bad fp');
+    if (op === 'dismiss') { record('attention.dismissed', subject, { key: body.key, fp: body.fp }); return { ok: true }; }
+    const until = snoozeUntil(body);
+    record('attention.snoozed', subject, { key: body.key, fp: body.fp, until });
+    return { ok: true, until };
   }
 
   // What a headless run is doing right now: state, elapsed time, its latest step and a log tail.
@@ -333,6 +400,7 @@ export function createApp({
     const t = store.getTask(slug);
     if (!t) throw new HttpError(404, 'no such task');
     if (t.archived) throw new HttpError(409, 'archived tasks cannot be opened');
+    const acted = noteActed(slug, ['question', 'stalled', 'failed', 'review']);
     const action = t.status === 'done' ? 'reopen' : status.live.has(slug) ? 'focus' : t.status === 'backlog' ? 'start' : 'resume';
     let result;
     try {
@@ -347,6 +415,7 @@ export function createApp({
       result = { ok: false, action, error: err.message };
     }
     record('open.requested', `task:${slug}`, { slug, action, ok: result.ok, ...(result.ok ? {} : { error: result.error }) });
+    if (result.ok) acted();
     refresh();
     return result;
   }
@@ -416,6 +485,8 @@ export function createApp({
     } catch (err) {
       error = err.message;
     }
+    // This path bypasses focusflow's CLI, so tell focusflow's memory what the human said (best effort).
+    if (error === null) { try { await runFocusCmd(['remember', c.text, '--task', slug, '--said'], 10000); } catch { /* memory is a nicety here */ } }
     record('message.sent', `task:${slug}`, { slug, text: c.text, mode: 'headless', via: 'resume', ok: error === null, ...(error === null ? {} : { error }) });
     refresh();
     if (error !== null) throw new HttpError(502, error);
@@ -424,7 +495,9 @@ export function createApp({
 
   // From a project coordinator's chat, `fanout` also tells every open subtask of that project.
   async function sendMessage(slug, body) {
+    const acted = noteActed(slug, ['question', 'stalled', 'failed']);
     const r = await sendMessageCore(slug, body);
+    acted();
     if (body.fanout === true) {
       const t = store.getTask(slug);
       if (t?.kind === 'project_agent' && t.project) {
@@ -579,6 +652,7 @@ export function createApp({
     const t = store.getTask(slug);
     if (!t) throw new HttpError(404, 'no such task');
     const action = body.action;
+    const acted = noteActed(slug, action === 'approve' ? ['review'] : []);
     if (action !== 'approve' && !Object.hasOwn(TASK_ACTIONS, action)) throw new HttpError(400, 'unknown action');
     if (t.archived && action !== 'unarchive') throw new HttpError(409, 'archived tasks can only be unarchived');
     if (t.kind === 'project_agent' && ['approve', 'review', 'archive'].includes(action)) throw new HttpError(409, 'a project coordinator is permanent');
@@ -610,6 +684,7 @@ export function createApp({
     }
     record('task.action', `task:${slug}`, { slug, action, ok: true });
     refresh();
+    acted();
     return { ok: true, action, output };
   }
 
@@ -810,6 +885,51 @@ export function createApp({
     if (pathname === '/api/needs-you') {
       if (!need('GET')) return;
       return json(res, 200, needsYou());
+    }
+    if (pathname === '/api/memories') {
+      if (!need('GET')) return;
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const args = ['memories', '--json'];
+      for (const k of ['task', 'project']) {
+        const v = q.get(k);
+        if (v !== null) { if (!SLUG.test(v)) return fail(res, 400, `bad ${k}`); args.push(`--${k}`, v); }
+      }
+      if (q.get('global') === '1') args.push('--global');
+      if (q.get('all') === '1') args.push('--all');
+      let out;
+      try { out = await runFocusCmd(args, 10000); } catch (err) { return fail(res, 502, err.message); }
+      let memories;
+      try { memories = JSON.parse(out.stdout || '[]'); } catch { return fail(res, 502, 'focusflow memories returned something unexpected'); }
+      return json(res, 200, { memories });
+    }
+    const mm = /^\/api\/memories\/([0-9a-f]{8})\/(pin|unpin|promote|restore|forget)$/.exec(pathname);
+    if (mm) {
+      if (!need('POST')) return;
+      try {
+        const out = await serial(() => runFocusCmd(['memory', mm[2], mm[1]], 10000));
+        return json(res, 200, { ok: true, output: out.stdout.trim() });
+      } catch (err) { return fail(res, 502, err.message); }
+    }
+    if (pathname === '/api/memories/new') {
+      if (!need('POST')) return;
+      const body = await readJson(req);
+      const c = checkText(body.text);
+      if (!c.ok) return fail(res, 400, c.error);
+      const args = ['remember', c.text, '--json'];
+      if (body.scope === 'global') args.push('--global');
+      else if (body.scope === 'project' && SLUG.test(body.project ?? '')) args.push('--project', body.project);
+      else if (body.scope === 'task' && SLUG.test(body.task ?? '')) args.push('--task', body.task);
+      else return fail(res, 400, 'scope must be task (with task), project (with project) or global');
+      if (body.pin === true) args.push('--pin');
+      try {
+        const out = await serial(() => runFocusCmd(args, 10000));
+        return json(res, 200, { ok: true, memory: JSON.parse(out.stdout) });
+      } catch (err) { return fail(res, 502, err.message); }
+    }
+    const nm = /^\/api\/needs-you\/(snooze|dismiss|restore)$/.exec(pathname);
+    if (nm) {
+      if (!need('POST')) return;
+      return json(res, 200, attentionAction(nm[1], await readJson(req)));
     }
     if (pathname === '/api/since') {
       if (!need('GET')) return;

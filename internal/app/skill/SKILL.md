@@ -1122,6 +1122,29 @@ implementation / debugging work. The SessionStart hook gets you the
 first check; you are responsible for every subsequent check.
 Re-evaluate on every turn.
 
+### 4.17 Memory (never make the user say it twice)
+
+focusflow remembers what the user tells each task: every answer to an
+agent's question and every instruction sent through `focusflow message`,
+`focusflow do --with` or the dashboard is stored automatically. At session
+start the hook injects a **WHAT YOU ALREADY KNOW** block (global, project and
+task memories). Treat those as settled: do not ask them again. If one looks
+wrong or outdated, ask the user whether to change it.
+
+When the user states a durable decision or preference in the conversation
+(not through a message), record it yourself, without asking permission:
+
+```
+focusflow remember "<decision in one sentence>"                 # this task
+focusflow remember "<decision>" --project <slug>                # the whole project
+focusflow remember "<preference>" --global                      # everywhere
+```
+
+The user manages memory with `focusflow memories [--task|--project|--global]`,
+`focusflow memory pin|unpin|promote|restore <id>` and `focusflow forget <id>`.
+Memory is for decisions and preferences; durable facts about the user or org
+still go to the knowledge base (§4.10).
+
 ### 4.18 Message bus (mail — unread/read)
 
 Mail between sessions and the human. A message is **unread** until

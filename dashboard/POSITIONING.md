@@ -1,9 +1,28 @@
 # Focusflow: positioning, moat and IP
 
-Written 2026-09-25. Companion to `DESIGN-AUDIT.md` (what the app is today) and `RESEARCH.md` (the market). This is a
+Written 2026-09-25, revised the same day.  Companion to `DESIGN-AUDIT.md` (what the app is today) and `RESEARCH.md` (the market). This is a
 strategy draft: its claims are for you to test, not settled facts.
 
 ---
+
+## 0. Whose moat this is
+
+This is **Focusflow's** moat. Focusflow is the product: an agent and work layer built on top of Claude Code, for
+Claude users. **Flow** was the earlier personal tool it grew out of: a task list that could open a Claude session per
+task. Focusflow kept that seed and grew it many times over:
+
+| | Flow (the foundation) | Focusflow (the product) |
+|---|---|---|
+| Unit of work | a task with a brief | a task with a brief, notes, **memory**, a stage and an approval step, inside a project |
+| Talking to agents | open a terminal | message any task or project from anywhere, with **delivery receipts**; replies come to one inbox |
+| Running agents | you drive each session | sessions run **in the background**, you step in only when needed |
+| What needs you | you check each session | **Needs you** ranks every question, review, failure and stall, and explains why |
+| Remembering | whatever you re-type | **every answer and instruction is remembered** and given to every future session |
+| Projects | a label | a **project assistant** that triages new asks and checks in on a schedule |
+| Safety | none | stages, Undo, quiet hours, backups, explicit consent for unattended runs |
+| Interface | command line | a Mac app, a dashboard, notifications, a Dock badge, plus the full CLI |
+
+Everything below is about what makes Focusflow hard to copy, not Flow.
 
 ## 1. The uncomfortable starting fact
 
@@ -37,9 +56,10 @@ Three jobs, in order of how hard they are to copy:
 
 | Layer | What it is | Why it compounds | Status today |
 |---|---|---|---|
+| **Memory from the human channel** *(shipped 2026-09-25)* | Every answer and instruction the human gives any agent is captured automatically (with the question it answered) and injected into every later session in scope: task, project, or everywhere | Claude Code's own memory is per repository and written by the agent. Focusflow's is written by *you*, scoped to *work*, shared across every session and harness, and it grows with every reply | Built: `remember`, `memories`, Memory tab, session-start recall |
+| **Attention engine** *(shipped 2026-09-25)* | Scores every item (kind, urgency, priority, age, what it blocks, your own habits), explains why, detects stalled runs, supports snooze/dismiss, holds non-urgent news through quiet hours | It learns from what *you* act on fast; a copy starts from zero | Built (v1 learning from time-to-act) |
 | **Personal work graph** | Tasks, projects, briefs, notes, messages, decisions, timestamps, all local and event-sourced | The longer you use it, the richer the context each agent starts with. Switching away means losing that history | Built (SQLite + event log + briefs/notes) |
 | **Judgement loop** | Review → Approve / Request changes → knowledge-base sweep | Your decisions become "house rules" agents inherit; quality rises with use. Nobody else captures *why* you accepted work | Half built (approve + KB sweep; no "request changes" reasons, no rules distilled yet) |
-| **Attention engine** | Ranking what needs you: reviews, questions, failures, deadlines, stalls | Tuned by your own responses (what you act on fast, what you ignore) | Built (rule-based Needs you); learning not yet |
 | **Agent-to-human protocol** | The message bus: addressable tasks and projects, delivery receipts, urgency, hooks that inject context, stop-hook nudges | A neutral protocol can work across harnesses (Claude, Codex, future ones). A first party will only ever support its own agents | Built for Claude; Codex partly |
 | **Project assistants** | One permanent coordinator per project that triages new asks, creates scoped subtasks and checks in on a schedule | Encodes delegation, not just execution; it improves as the work graph grows | Built (coordinator + schedule) |
 | **Trust by design** | Local-first, no account, readable files, receipts, Undo, backups, explicit consent for unattended runs | Trust is slow to earn and quick to lose; it is a brand asset, not a feature | Built; needs to be visible in the product |

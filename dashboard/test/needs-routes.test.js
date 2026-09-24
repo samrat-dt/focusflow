@@ -82,3 +82,52 @@ test('quick-add with stage next queues the new task, and rejects an unknown stag
   assert.deepEqual(verbs.filter(v => v === 'add' || v === 'next'), ['add', 'next']);
   assert.equal((await h.post('/api/capture', { name: 'Another one', stage: 'sideways' })).status, 400);
 });
+
+test('a headless continuation tells focusflow memory what the human said', async () => {
+  h = await makeApp({ live: [], tasks: [T('cont', 'in-progress')], sessions: { cont: { sessionId: 's-1', harness: 'claude' } } });
+  const r = await h.post('/api/tasks/cont/message', { text: 'Monthly first', mode: 'headless', confirm: true });
+  assert.equal(r.status, 200);
+  assert.deepEqual(h.calls.map(c => c.args).find(a => a[0] === 'remember'), ['remember', 'Monthly first', '--task', 'cont', '--said']);
+});
+
+test('snooze, dismiss and restore are events; approving records how long the review waited', async () => {
+  h = await makeApp({ live: [], tasks: [T('rev', 'review', { status_changed_at: at(2026, 9, 22, 10).toISOString() }), T('b', 'review', { status_changed_at: at(2026, 9, 22, 11).toISOString() })] });
+  const item = (await h.get('/api/needs-you')).json().items.find(i => i.key === 'review:rev');
+  const s = await h.post('/api/needs-you/snooze', { key: item.key, fp: item.fp, preset: '1h' });
+  assert.equal(s.status, 200);
+  assert.equal(s.json().until, at(2026, 9, 22, 13).toISOString());
+  let n = (await h.get('/api/needs-you')).json();
+  assert.ok(!n.items.some(i => i.key === 'review:rev'));
+  assert.equal(n.hidden.length, 1);
+  assert.equal((await h.post('/api/needs-you/restore', { key: item.key })).status, 200);
+  n = (await h.get('/api/needs-you')).json();
+  assert.ok(n.items.some(i => i.key === 'review:rev'));
+  assert.equal((await h.post('/api/needs-you/dismiss', { key: 'nonsense', fp: 'x' })).status, 400);
+  assert.equal((await h.post('/api/needs-you/snooze', { key: item.key, fp: item.fp, preset: 'forever' })).status, 400);
+
+  assert.equal((await h.post('/api/tasks/rev/action', { action: 'approve' })).status, 200);
+  const acts = h.store.attentionActs();
+  assert.deepEqual(acts.map(a => [a.kind, a.waited_seconds]), [['review', 7200]]);
+  // Once per item: acting again on the same review is not counted twice.
+  await h.post('/api/tasks/rev/action', { action: 'approve' }).catch(() => {});
+  assert.equal(h.store.attentionActs().length, 1);
+});
+
+test('memory routes pass validated arguments to focusflow and never raw input', async () => {
+  const mem = [{ id: 'ab12cd34', kind: 'answer', scope: 'task', task: 'x', body: 'Monthly first', status: 'active', pinned: false, created_at: '2026-09-25T10:00:00Z' }];
+  h = await makeApp({ live: [], tasks: [T('x', 'in-progress')], focusflow: args => {
+    if (args[0] === 'memories') return { stdout: JSON.stringify(mem), stderr: '' };
+    if (args[0] === 'remember') return { stdout: JSON.stringify({ ...mem[0], id: 'ffff0000', body: args[1] }), stderr: '' };
+    return { stdout: 'Pinned [ab12cd34]\n', stderr: '' };
+  } });
+  assert.deepEqual((await h.get('/api/memories?task=x')).json().memories, mem);
+  assert.equal((await h.get('/api/memories?task=../../etc')).status, 400);
+  assert.equal((await h.post('/api/memories/ab12cd34/pin', {})).status, 200);
+  assert.equal((await h.post('/api/memories/zz/pin', {})).status, 404);
+  const n = await h.post('/api/memories/new', { text: 'Use GBP', scope: 'project', project: 'web' });
+  assert.equal(n.status, 200);
+  assert.equal((await h.post('/api/memories/new', { text: '-rf', scope: 'global' })).status, 400);
+  assert.equal((await h.post('/api/memories/new', { text: 'x', scope: 'project' })).status, 400);
+  const calls = h.calls.map(c => c.args).filter(a => ['memories', 'memory', 'remember'].includes(a[0]));
+  assert.deepEqual(calls, [['memories', '--json', '--task', 'x'], ['memory', 'pin', 'ab12cd34'], ['remember', 'Use GBP', '--json', '--project', 'web']]);
+});

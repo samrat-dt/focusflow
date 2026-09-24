@@ -213,6 +213,11 @@ func cmdMessage(args []string) int {
 	if parsed.ReplyTo != "" {
 		m.ReplyTo = sql.NullString{String: parsed.ReplyTo, Valid: true}
 	}
+	// What the human tells a task is remembered for every future session (before the
+	// insert, so the task's question is still the pending one).
+	if fromTaskSlug == "" && target.TaskSlug != "" {
+		rememberHuman(db, target.TaskSlug, parsed.Body, "message")
+	}
 	if err := store.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

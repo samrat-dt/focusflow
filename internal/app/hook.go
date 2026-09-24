@@ -93,6 +93,9 @@ func cmdHookSessionStart(args []string) int {
 			"`focusflow inbox pop --wait` and re-arm it after every wake.",
 		slug,
 	)
+	if mem := sessionMemory(slug); mem != "" {
+		instructions += "\n\n" + mem
+	}
 
 	return emitSessionStartContext(instructions)
 }
@@ -345,4 +348,24 @@ func stopBroadcastNudge(db *sql.DB, slug string) int {
 		return 1
 	}
 	return 0
+}
+
+// sessionMemory is the "what you already know" block for a task session, or
+// "" when there is none or the database cannot be read (a hook never fails
+// a session start over memory).
+func sessionMemory(slug string) string {
+	dbPath, err := dataDBPath()
+	if err != nil {
+		return ""
+	}
+	db, err := openConcurrentDB(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	task, err := ResolveTask(db, slug, true)
+	if err != nil {
+		return ""
+	}
+	return memoryContext(db, task)
 }

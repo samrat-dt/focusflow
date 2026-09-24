@@ -231,6 +231,11 @@ func cmdDo(args []string) int {
 	}
 	committed = true
 
+	// An instruction the human hands a task is remembered for its future sessions.
+	if withText != "" && resolveCurrentTaskSlug(db) == "" {
+		rememberHuman(db, task.Slug, withText, "do")
+	}
+
 	if *auto {
 		return spawnHeadless(db, task, sessionID, needsBootstrap, extraClaudeArgs, withText)
 	}
