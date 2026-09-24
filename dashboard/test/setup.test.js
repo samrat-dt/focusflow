@@ -53,7 +53,14 @@ test('setup fails clearly when focusflow cannot be read, and creates no data', a
 
 function sourceFiles() {
   const out = [path.join(ROOT, 'server.js'), path.join(ROOT, 'package.json')];
-  for (const d of ['lib', 'bin', 'public']) for (const f of fs.readdirSync(path.join(ROOT, d))) out.push(path.join(ROOT, d, f));
+  const walk = dir => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|css|html|json|md|py)$/.test(e.name)) out.push(p); // text only; fonts and licences are not code
+    }
+  };
+  for (const d of ['lib', 'bin', 'public']) walk(path.join(ROOT, d));
   return out;
 }
 

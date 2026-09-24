@@ -43,7 +43,7 @@ class HttpError extends Error {
   // `data` adds fields to the JSON error body (e.g. the project a failed capture had already created).
   constructor(status, message, data) { super(message); this.status = status; this.data = data; }
 }
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function send(res, status, body, type, extra = {}) {
   res.writeHead(status, {
@@ -63,6 +63,24 @@ function tokenOk(given, expected) {
   const a = Buffer.from(String(given ?? ''));
   const b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// The redesigned front end: ES modules, styles, fonts and icons under public/ui/. Only files inside that
+// directory are served, by exact extension; anything else is a 404.
+const UI_TYPES = {
+  '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
+};
+function serveUi(res, pathname) {
+  let rel;
+  try { rel = decodeURIComponent(pathname.slice('/ui/'.length)); } catch { return fail(res, 400, 'bad path'); }
+  const root = path.join(PUBLIC_DIR, 'ui');
+  const file = path.resolve(root, rel);
+  const type = UI_TYPES[path.extname(file).toLowerCase()];
+  if (!type || rel.includes('\0') || (file !== root && !file.startsWith(root + path.sep))) return fail(res, 404, 'not found');
+  let body;
+  try { body = fs.readFileSync(file); } catch { return fail(res, 404, 'not found'); }
+  return send(res, 200, body, type, { 'cache-control': 'no-cache' });
 }
 
 function readText(file) {
@@ -765,6 +783,10 @@ export function createApp({
     const { pathname } = new URL(req.url, 'http://localhost');
 
     if (!pathname.startsWith('/api/')) {
+      if (pathname.startsWith('/ui/')) {
+        if (req.method !== 'GET') return fail(res, 405, 'method not allowed', { allow: 'GET' });
+        return serveUi(res, pathname);
+      }
       const entry = STATIC[pathname];
       if (!entry) return fail(res, 404, 'not found');
       if (req.method !== 'GET') return fail(res, 405, 'method not allowed', { allow: 'GET' });
