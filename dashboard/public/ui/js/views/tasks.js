@@ -17,9 +17,9 @@ function prefs() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('focusflow-tasks-view') || '{}'); } catch { /* none */ }
   const q = route.query;
-  return { view: q.view ?? saved.view ?? 'board', group: q.group ?? saved.group ?? 'stage', project: q.project ?? '', priority: q.priority ?? '', q: q.q ?? '', done: q.done ?? '' };
+  return { backlog: q.backlog ?? saved.backlog ?? '', view: q.view ?? saved.view ?? 'board', group: q.group ?? saved.group ?? 'stage', project: q.project ?? '', priority: q.priority ?? '', q: q.q ?? '', done: q.done ?? '' };
 }
-function savePrefs(p) { try { localStorage.setItem('focusflow-tasks-view', JSON.stringify({ view: p.view, group: p.group })); } catch { /* optional */ } }
+function savePrefs(p) { try { localStorage.setItem('focusflow-tasks-view', JSON.stringify({ view: p.view, group: p.group, backlog: p.backlog })); } catch { /* optional */ } }
 
 const recentDone = t => t.status !== 'done' || Date.now() - Date.parse(t.status_changed_at || t.updated_at) < DONE_DAYS * 86400000;
 
@@ -37,6 +37,8 @@ function toolbar(p) {
   return h('div.toolbar',
     seg('view', [['board', 'Board', 'board'], ['list', 'List', 'list']]),
     p.view === 'list' && seg('group', [['stage', 'By stage'], ['project', 'By project'], ['priority', 'By priority']]),
+    p.view === 'board' && h('button.btn.ghost.sm', { type: 'button', 'aria-pressed': String(p.backlog === '1'), on: { click: () => { const v = p.backlog === '1' ? '' : '1'; setQuery({ backlog: v }); savePrefs({ ...p, backlog: v }); } } },
+      p.backlog === '1' ? 'Hide backlog' : `Show backlog (${S.tasks.filter(t => t.status === 'backlog' && !t.archived && (t.kind ?? 'regular') === 'regular').length})`),
     h('span.grow'),
     search, projSel, priSel,
     filtered && h('button.btn.ghost.sm', { type: 'button', on: { click: () => setQuery({ project: '', priority: '', q: '' }) } }, icon('x'), 'Clear'));
@@ -94,7 +96,7 @@ export const tasks = {
     let body;
     if (!all.length) body = empty({ art: 'tasks', title: 'No tasks yet', body: 'Add what you want Claude to do. Tasks in Up next are ready to hand over.', actions: [h('button.btn.primary', { type: 'button', on: { click: () => dispatchEvent(new CustomEvent('ff:new-task')) } }, icon('plus'), 'New task')] });
     else if (p.view === 'board') {
-      body = h('div.board', LANES.map(st => lane(st, sortTasks(list.filter(t => t.status === st)))));
+      body = h('div.board', LANES.filter(st => st !== 'backlog' || p.backlog === '1').map(st => lane(st, sortTasks(list.filter(t => t.status === st)))));
       body.addEventListener('dragstart', e => { const c = e.target.closest('.card'); if (!c) return; dragSlug = c.dataset.slug; c.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragSlug); });
       body.addEventListener('dragend', e => { e.target.closest?.('.card')?.classList.remove('dragging'); });
     } else {

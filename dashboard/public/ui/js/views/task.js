@@ -5,7 +5,7 @@ import { S, act, edit, send, openTerminal, taskBy, notify, load } from '../state
 import { route, go, setQuery, routeOpts, onRoute } from '../router.js';
 import { menu, toast, oops, markdown, dialog, empty } from '../ui.js';
 import { STAGE_NAME, PRIORITY_NAME, humanTime, duration, primaryAction } from '../logic.js';
-import { statusLine, projectName, taskMenu } from '../parts.js';
+import { statusLine, projectName, taskMenu, displayName } from '../parts.js';
 
 const cache = new Map(); // slug -> { detail, thread, run, memories }
 const drafts = new Map();
@@ -97,7 +97,7 @@ function conversation(t, c) {
   const msgs = th?.messages ?? [];
   const closed = t.archived || t.status === 'done';
   const background = th && !th.live && (!th.has_session || th.harness === 'claude');
-  const ta = h('textarea', { rows: '3', maxlength: '380', placeholder: closed ? '' : `Message Claude about “${t.name}”…`, 'aria-label': 'Message', value: drafts.get(t.slug) ?? '', dataset: { key: 'composer' } });
+  const ta = h('textarea', { rows: '3', maxlength: '380', placeholder: closed ? '' : `Message ${t.kind === 'project_agent' ? 'the assistant' : `Claude about “${t.name}”`}…`, 'aria-label': 'Message', value: drafts.get(t.slug) ?? '', dataset: { key: 'composer' } });
   const count = h('span', `${(drafts.get(t.slug) ?? '').length}/380`);
   const sendBtn = h('button.btn.primary.sm', { type: 'button' }, icon('send'), 'Send');
   const doSend = async () => {
@@ -198,7 +198,7 @@ function notesTab(t, c) {
 
 // ---------- page ----------
 export const task = {
-  title: r => taskBy(r.id)?.name ?? 'Task',
+  title: r => displayName(taskBy(r.id)) || 'Task',
   deps: r => [taskBy(r.id), cache.get(r.id), r.query, editingBrief, showLog, drafts.size],
   render(r, ctx) {
     const slug = r.id;
@@ -213,9 +213,12 @@ export const task = {
     const tab = r.query.tab ?? 'conversation';
     const unread = cc.thread?.messages?.filter(m => m.unread).length ?? 0;
     const tabs = [['conversation', 'Conversation', unread || null], ['memory', 'Memory', cc.memories?.length || null], ['brief', 'Brief'], ['notes', 'Notes', cc.detail?.notes?.length || null]];
-    const title = h('input.title-edit', { value: t.name, 'aria-label': 'Task name', maxlength: '200', dataset: { key: 'title' } });
-    title.addEventListener('keydown', e => { if (e.key === 'Enter') title.blur(); if (e.key === 'Escape') { title.value = t.name; title.blur(); } });
-    title.addEventListener('change', () => { const v = title.value.trim(); if (v && v !== t.name) save(slug, { name: v }, 'Renamed.'); else title.value = t.name; });
+    const agent = t.kind === 'project_agent';
+    const title = agent ? h('h1', displayName(t)) : h('input.title-edit', { value: t.name, 'aria-label': 'Task name', maxlength: '200', dataset: { key: 'title' } });
+    if (!agent) {
+      title.addEventListener('keydown', e => { if (e.key === 'Enter') title.blur(); if (e.key === 'Escape') { title.value = t.name; title.blur(); } });
+      title.addEventListener('change', () => { const v = title.value.trim(); if (v && v !== t.name) save(slug, { name: v }, 'Renamed.'); else title.value = t.name; });
+    }
     const p = primaryAction(t);
     const primary = p.action === 'message' ? null : h('button.btn', { type: 'button', class: p.action === 'approve' ? 'primary' : '', on: { click: () => act(slug, p.action) } }, p.action === 'approve' && icon('check'), p.label);
     return h('div.page',

@@ -5,7 +5,7 @@ import { S, act, load, send, capture, tasksNow, pendingFor } from '../state.js';
 import { go } from '../router.js';
 import { menu, toast, oops, empty } from '../ui.js';
 import { greeting, humanTime, duration, parseQuickAdd } from '../logic.js';
-import { taskRow, projectName } from '../parts.js';
+import { taskRow, projectName, displayName } from '../parts.js';
 
 const KIND = {
   question: { label: 'Question for you', icon: 'message' },
@@ -72,7 +72,7 @@ function attnRow(i) {
     h('div.attn-icon', { class: iconCls }, icon(k.icon)),
     h('div.attn-main',
       h('div.attn-kind', [k.label, i.urgent && 'Urgent', i.project && projectName(i.project), humanTime(i.at)].filter(Boolean).join(' · ')),
-      h('div.attn-title', { role: 'link', tabindex: '0', on: { click: () => go(`/task/${i.slug}`), keydown: e => { if (e.key === 'Enter') go(`/task/${i.slug}`); } } }, i.agent ? `${i.name}` : i.name),
+      h('div.attn-title', { role: 'link', tabindex: '0', on: { click: () => go(`/task/${i.slug}`), keydown: e => { if (e.key === 'Enter') go(`/task/${i.slug}`); } } }, i.agent ? `${projectName(i.project)} assistant` : i.name),
       h('div.attn-detail', { class: i.kind === 'question' ? 'quote' : '' }, i.kind === 'review' && t ? 'Claude says this is finished. Take a look, then approve it or ask for changes.' : i.detail),
       i.reasons?.length ? h('div.attn-why', `Why it’s here: ${i.reasons.join(' · ')}`) : null,
       openReply === i.slug && replyBox(i)),

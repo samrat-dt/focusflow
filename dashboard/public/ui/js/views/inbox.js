@@ -5,7 +5,7 @@ import { S, load } from '../state.js';
 import { go } from '../router.js';
 import { toast, empty } from '../ui.js';
 import { humanTime, STAGE_NAME } from '../logic.js';
-import { projectName } from '../parts.js';
+import { projectName, displayName } from '../parts.js';
 import { task } from './task.js';
 
 // Two panes: every conversation on the left, the selected one on the right (the task page's conversation).
@@ -20,7 +20,7 @@ export const inbox = {
       return h('div.item', { tabindex: '0', class: sel === th.slug ? 'selected' : '', dataset: { key: `th:${th.slug}` }, style: 'align-items:flex-start',
         on: { click: () => go(`/inbox/${th.slug}`, { replace: !!sel }), keydown: e => { if (e.key === 'Enter') go(`/inbox/${th.slug}`); } } },
         h('div.body',
-          h('div.row', { style: 'gap:8px' }, h('div.title.grow', { style: th.unread ? 'font-weight:650' : '' }, th.name), th.unread ? h('span.badge', String(th.unread)) : null),
+          h('div.row', { style: 'gap:8px' }, h('div.title.grow', { style: th.unread ? 'font-weight:650' : '' }, displayName(S.tasks.find(x => x.slug === th.slug) ?? th)), th.unread ? h('span.badge', String(th.unread)) : null),
           h('div.meta', urgent && h('span.tag.danger', 'Urgent'), h('span', STAGE_NAME[th.status] ?? th.status), th.project && [h('span.sep'), projectName(th.project)], h('span.sep'), humanTime(th.last.at)),
           h('div', { style: 'color:var(--ink-2);font-size:13px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${th.last.direction === 'out' ? 'You: ' : ''}${th.last.preview}`)));
     }));

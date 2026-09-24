@@ -7,6 +7,9 @@ import { go } from './router.js';
 
 export const projectName = slug => S.overview.projects.find(p => p.slug === slug)?.name ?? S.projectList.find(p => p.slug === slug)?.name ?? slug;
 
+// What a person calls a task. A project's assistant is "<Project> assistant", never its internal name.
+export const displayName = t => (t?.kind === 'project_agent' && t.project ? `${projectName(t.project)} assistant` : t?.name ?? '');
+
 export function statusLine(t) {
   const live = t.headless_running || (t.terminal_open && t.working);
   return h('span.status', h('span.dot', { class: `${t.status}${live ? ' pulse' : ''}` }), STAGE_NAME[t.status] ?? t.status);
@@ -66,7 +69,7 @@ export function taskRow(t, { hideProject = false, hideStatus = false, selectable
   const row = h('div.item', { tabindex: '0', role: 'link', dataset: { key: `task:${t.slug}` }, class: selected ? 'selected' : '',
     on: { click: () => go(`/task/${t.slug}`), keydown: e => { if (e.key === 'Enter') go(`/task/${t.slug}`); } } },
     selectable && h('button.check', { type: 'button', role: 'checkbox', 'aria-checked': String(selected), 'aria-label': `Select ${t.name}`, on: { click: e => { e.stopPropagation(); selectable(t.slug); } } }, selected && icon('check')),
-    h('div.body', h('div.title', t.name), h('div.sub', metaLine(t, { hideProject, hideStatus })), liveNote(t)),
+    h('div.body', h('div.title', displayName(t)), h('div.sub', metaLine(t, { hideProject, hideStatus })), liveNote(t)),
     h('div.end', h('span.reveal', primaryButton(t)), h('span.meta', humanTime(t.updated_at)), moreButton(t)));
   return row;
 }
@@ -74,7 +77,7 @@ export function taskRow(t, { hideProject = false, hideStatus = false, selectable
 export function taskCard(t, { draggable = true, landed = false } = {}) {
   const card = h('div.card', { tabindex: '0', draggable: draggable && !t.archived && t.kind !== 'project_agent' ? 'true' : undefined, dataset: { slug: t.slug, key: `card:${t.slug}` }, class: landed ? 'landed' : '',
     on: { click: () => go(`/task/${t.slug}`), keydown: e => { if (e.key === 'Enter') go(`/task/${t.slug}`); } } },
-    h('div.card-title', t.name), metaLine(t, { hideStatus: true }), liveNote(t),
+    h('div.card-title', displayName(t)), metaLine(t, { hideStatus: true }), liveNote(t),
     t.status === 'review' && h('div', { style: 'margin-top:10px' }, primaryButton(t)),
     moreButton(t));
   return card;
