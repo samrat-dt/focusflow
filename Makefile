@@ -65,4 +65,4 @@ uninstall:
 	@echo "Skill and hook removed. Remove the PATH line from ~/.zshrc manually if desired."
 
 clean:
-	rm -f $(BINARY) flowde
+	rm -f $(BINARY) coverage.out
