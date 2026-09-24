@@ -20,6 +20,24 @@ func readToken() -> String {
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 }
 
+// How many things are waiting on the user (review + questions + failed runs), from the local dashboard.
+// nil when the server does not answer; the Dock badge then keeps what it had.
+func needsBadge(_ port: Int) -> Int? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/api/needs-you") else { return nil }
+    var req = URLRequest(url: url, timeoutInterval: 3)
+    req.setValue(readToken(), forHTTPHeaderField: "x-focusflow-token")
+    let sem = DispatchSemaphore(value: 0)
+    var result: Int?
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+        defer { sem.signal() }
+        guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        result = json["badge"] as? Int
+    }.resume()
+    _ = sem.wait(timeout: .now() + 4)
+    return result
+}
+
 func serverUp(_ port: Int) -> Bool {
     let sock = socket(AF_INET, SOCK_STREAM, 0)
     if sock < 0 { return false }
@@ -137,6 +155,16 @@ final class App: NSObject, NSApplicationDelegate {
         buildMenu()
         NSApp.activate(ignoringOtherApps: true)
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.keepAlive() }
+        updateBadge()
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.updateBadge() }
+    }
+
+    // The Dock icon shows how many things need you; empty when nothing does.
+    func updateBadge() {
+        DispatchQueue.global().async {
+            guard let n = needsBadge(readPort()) else { return }
+            DispatchQueue.main.async { NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil }
+        }
     }
 
     // A long-running window should recover if the server was restarted under it.

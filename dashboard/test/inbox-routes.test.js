@@ -35,8 +35,8 @@ test('GET /api/inbox lists threads newest first with unread counts, live marker 
   const running = j.threads[0];
   assert.deepEqual(running, {
     slug: 'running', name: 'Running', unread: 2,
-    last: { direction: 'in', preview: 'newest two', at: at(2026, 9, 22, 11, 30).toISOString() },
-    live: true, auto_run_status: null, status: 'in-progress',
+    last: { direction: 'in', preview: 'newest two', at: at(2026, 9, 22, 11, 30).toISOString(), urgent: true },
+    project: null, live: true, auto_run_status: null, status: 'in-progress',
   });
   assert.equal(j.threads[1].unread, 0);
   assert.equal(j.threads[2].live, false);
@@ -71,7 +71,7 @@ test('GET /api/tasks/:slug/thread: oldest first, unread flags, no reply cue, com
   assert.equal(j.archived, false);
   assert.equal(j.work_dir, '/work/x');
   assert.equal(j.has_session, true);
-  assert.deepEqual(Object.keys(j.messages[0]).sort(), ['at', 'body', 'direction', 'id', 'reply_to', 'unread']);
+  assert.deepEqual(Object.keys(j.messages[0]).sort(), ['at', 'body', 'direction', 'id', 'reply_to', 'unread', 'urgent']);
 });
 
 test('the thread says whether the task already has a session (governs whether headless is a fresh run or a continuation)', async () => {

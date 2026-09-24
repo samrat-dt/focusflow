@@ -197,7 +197,7 @@ test('app.js sends every request through Help.request and does not repeat an err
   const js = read('app.js');
   assert.match(js, /Help\.request\(/);
   assert.ok(!/await fetch\(/.test(js), 'app.js must not fetch on its own');
-  assert.match(js, /function reportError\(err\) \{\s*if \(!err\.helped\) showBanner\(err\.message\);/);
+  assert.match(js, /function reportError\(err\) \{\s*if \(!err\.helped\) showBanner\(say\(err\)\);/);
   assert.match(js, /loadInbox\(\)\.catch\(reportError\)/);
   assert.match(js, /Help\.init\(\{/);
   assert.match(js, /onRecovered: \(\) => reload\(\)/);

@@ -32,7 +32,7 @@ const DEFAULT_TASKS = () => [
 // `focusflow message` with a new id and everything else with empty output.
 // `sessions`: map slug -> { sessionId, harness } | undefined, backs the `readSession` DI seam.
 // `resume`: overrides the fake `resumeRun` call; defaults to a successful `{ pid: 1 }`.
-export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, resume, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder } = {}) {
+export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, resume, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder, runs = {} } = {}) {
   const calls = [];
   const resumeCalls = [];
   const inboxRows = { rows: [], fail: null };
@@ -61,6 +61,7 @@ export async function makeApp({ tasks, live = ['running'], focusflow, workDir = 
     },
     readWorkDir: () => workDir,
     readSession: ({ slug }) => sessions[slug] ?? null,
+    readRun: ({ slug }) => runs[slug] ?? null,
     resumeRun: async opts => { resumeCalls.push(opts); return resume ? resume(opts) : { pid: 1 }; },
     readProjects: () => [],
     readProjectsFull: () => projectsFull,

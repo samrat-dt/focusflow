@@ -136,3 +136,13 @@ pages with progress · natural-language capture · templates · menu-bar compani
 Emit (into the existing event log): `view.opened`, `action.clicked` (with result and latency), `review.approved`
 (time in review), `message.sent` (mode), `run.finished` (success/fail, duration), `question.answered` (age when
 answered). These give the north-star and tell you which improvements pay off.
+
+## 6. Status (2026-09-25)
+
+Implemented: B1, B3, B4, B5, B6, B7, B8, B10 (B2 earlier); Needs you view; run panel with cancel and finish
+notification; Approve as the primary on Review cards with consistent wording; Undo for Approve, project Archive and
+Pause all; two-pane inbox with inline reply and urgent styling; tabbed drawer with split layout; quick-add, filters,
+drag between lanes; first-run screen and legend; Dock badge; "since you were away" digest.
+
+Not done: keyboard navigation of the board, saved views, per-task timelines, analytics page, menu-bar companion,
+instrumentation events (section 5).

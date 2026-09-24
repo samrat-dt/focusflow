@@ -135,7 +135,8 @@ export function buildInbox({ store, device, live }) {
     if (!t) continue;
     threads.push({
       slug, name: t.name, unread: unread.get(slug) ?? 0,
-      last: { direction: last.direction, preview: preview(last.body), at: last.at },
+      last: { direction: last.direction, preview: preview(last.body), at: last.at, urgent: !!last.urgent },
+      project: t.project ?? null,
       live: live.has(slug), auto_run_status: t.auto_run_status ?? null, status: t.status,
     });
   }
@@ -151,7 +152,7 @@ export function buildThread({ store, device, slug, live = false, now = new Date(
   const through = store.threadRead(device, slug) ?? '';
   const rows = store.thread(device, slug);
   const messages = rows.map(m => ({
-    id: m.flow_id, direction: m.direction, body: m.body, at: m.at, reply_to: m.reply_to,
+    id: m.flow_id, direction: m.direction, body: m.body, at: m.at, reply_to: m.reply_to, urgent: !!m.urgent,
     delivered_at: m.direction === 'out' ? m.delivered_at : undefined,
     unread: m.direction === 'in' && !m.seen_read && m.at > through,
   }));

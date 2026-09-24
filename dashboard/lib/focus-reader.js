@@ -70,6 +70,18 @@ export function readSession({ focusRoot = defaultRoot(), dbName = defaultDbName(
   });
 }
 
+// A task's headless-run bookkeeping, straight from focusflow.db. On demand, one slug.
+export function readRun({ focusRoot = defaultRoot(), dbName = defaultDbName(), slug, busyTimeoutMs = 3000 }) {
+  return withFocusDb(path.join(focusRoot, dbName), busyTimeoutMs, db => {
+    const r = db.prepare('SELECT auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, work_dir, session_id FROM tasks WHERE slug = ?').get(slug);
+    if (!r) return null;
+    return {
+      status: r.auto_run_status ?? null, pid: r.auto_run_pid ?? null, started: r.auto_run_started ?? null,
+      finished: r.auto_run_finished ?? null, log: r.auto_run_log ?? null, workDir: r.work_dir ?? null, sessionId: r.session_id ?? null,
+    };
+  });
+}
+
 function notesCount(dir) {
   try {
     return fs.readdirSync(dir).filter(f => f.endsWith('.md')).length;

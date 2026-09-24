@@ -22,7 +22,9 @@ The Mac app (`npm run app`) hosts this in its own window and adds an always-on-t
 
 ## A morning
 
-1. **Board.** Review lane: two things finished overnight. Read them, click **Approve** — they close out (the
+0. **Needs you** (the landing tab, and the number on the Dock icon) lists what is waiting on me: reviews, questions,
+   failed runs, overdue items. A banner at the top says what happened while I was away.
+1. **Board.** Review lane: two things finished overnight. Read them, click **Approve** (Undo for six seconds) — they close out (the
    knowledge-base sweep runs in the background) and move to Done. In progress: one card is open in a terminal
    and idle; one is running headless. Next: today's literal queue.
 2. Something does not belong to one task: **Projects → expand "Resume" → Message**. The project's coordinator (one
@@ -33,7 +35,7 @@ The Mac app (`npm run app`) hosts this in its own window and adds an always-on-t
 4. Reply to a task from its drawer: the message runs headlessly and I see **sent → delivered** (a real receipt,
    stamped when the session actually surfaces it), then the reply.
 5. End of day, **Board**: **Pause** what is not worth leaving running (a headless run stops; an open terminal is
-   asked to wrap up and stays open, marked ⌨ + paused). **Send to review** what is done.
+   asked to wrap up and stays open, marked ⌨ + paused). **Ready for review** what is done.
 6. **Projects → Schedule…** puts a project on a rhythm (every 12h / 1d / 3d / 1w): a scheduled coordinator reviews it
    and nudges what is stuck.
 7. Done with a project: **Archive** it; find it again under **Archive → Unarchive**.

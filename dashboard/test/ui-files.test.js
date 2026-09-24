@@ -60,7 +60,7 @@ test('the header has a sound toggle, off by default', () => {
 test('the tab title and the sound follow the unread count', () => {
   const js = pub('app.js');
   assert.match(js, /document\.title = /);
-  assert.match(js, /\(\$\{n\}\) Focusflow/);
+  assert.match(js, /\(\$\{title\}\) Focusflow/);
   assert.match(js, /AudioContext/);
   assert.match(js, /focusflow-sound/);
 });

@@ -8,7 +8,10 @@ import { signalsFor } from './signals.js';
 import { makeEvent, appendEvent } from './event-log.js';
 import { runFocus } from './focus-run.js';
 import { focusEnv } from './focus-env.js';
-import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession } from './focus-reader.js';
+import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
+import { buildNeeds, buildSince } from './needs.js';
+import { lastActivity } from './activity.js';
+import { tailLog, pidAlive } from './runs.js';
 import { spawn } from 'node:child_process';
 import { buildOverview, buildArchive } from './hierarchy.js';
 import { runPickFolder } from './pick-folder.js';
@@ -25,6 +28,7 @@ const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/logic.js': ['logic.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/help.js': ['help.js', 'text/javascript; charset=utf-8'],
   '/help.css': ['help.css', 'text/css; charset=utf-8'],
@@ -100,13 +104,14 @@ export function createApp({
   focusRunDetached = (args, { env }) => { const c = spawn(config.focusBin, args, { env, detached: true, stdio: 'ignore' }); c.on('error', () => {}); c.unref(); return Promise.resolve(); },
   readWorkDir = ({ slug }) => readFocusWorkDir({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   readSession = ({ slug }) => readFocusSession({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
+  readRun = ({ slug }) => readFocusRun({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   resumeRun = opts => runResume(opts),
   activityHome = undefined,
   mirror = null,
   sync = null,
 }) {
   const notifier = injectedNotifier ?? createNotifier({ enabled: config.tunables.notifications !== false });
-  const status = { lastTickAt: null, lastError: null, mirrorError: null, live: new Set(), working: new Set(), malformed };
+  const status = { lastTickAt: null, lastError: null, mirrorError: null, live: new Set(), working: new Set(), malformed, runStates: null };
 
   // Idle vs working, for the (small) currently-live set only, claude harness only (the transcript
   // layout for other harnesses is unverified — see the design spec). Any read failure (missing
@@ -128,6 +133,24 @@ export function createApp({
       } catch { /* leave this slug idle */ }
     }
     return working;
+  }
+
+  // A headless run that ends is the moment the user has been waiting for: say so. The first look at
+  // each task only records its state (nothing is announced for runs that ended before we started).
+  function noteRunTransitions() {
+    const next = new Map(store.tasks().map(t => [t.slug, t.auto_run_status ?? null]));
+    const prev = status.runStates;
+    status.runStates = next;
+    if (!prev) return;
+    const arrivals = [];
+    for (const [slug, st] of next) {
+      if (prev.get(slug) !== 'running' || st === 'running') continue;
+      const t = store.getTask(slug);
+      if (!t || t.status === 'paused') continue; // a run the user stopped is not news
+      const failed = st === 'dead';
+      arrivals.push({ slug, name: t.name, urgent: failed, body: failed ? 'The headless run stopped unexpectedly.' : t.status === 'review' ? 'Finished. Ready for your review.' : 'The headless run finished.' });
+    }
+    if (arrivals.length) { try { notifier.notify(arrivals); } catch { /* a banner is a nicety */ } }
   }
 
   // Read focusflow, record what changed, mirror focusflow's text files, and tell sync.
@@ -152,6 +175,7 @@ export function createApp({
       status.working = computeWorking(status.live);
       status.lastTickAt = now();
     }
+    if (!result.skipped) noteRunTransitions();
     let mirrored = 0;
     if (mirror) {
       try {
@@ -197,6 +221,28 @@ export function createApp({
         harness: task.harness, has_session: task.has_session, started: task.session_started,
         last_resumed: task.session_last_resumed, live: v.live, auto_run_status: task.auto_run_status,
       },
+    };
+  }
+
+  function needsYou() {
+    const tasks = store.tasks().map(view);
+    return buildNeeds({ tasks, messages: store.messages(config.device) });
+  }
+
+  // What a headless run is doing right now: state, elapsed time, its latest step and a log tail.
+  function runInfo(slug) {
+    const row = readRun({ slug });
+    if (!row) return null;
+    const running = row.status === 'running';
+    const startMs = row.started ? Date.parse(row.started) : NaN;
+    const endMs = row.finished ? Date.parse(row.finished) : running ? now().getTime() : NaN;
+    const elapsed = Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, Math.round((endMs - startMs) / 1000)) : null;
+    let activity = null;
+    if (row.sessionId && row.workDir) activity = lastActivity({ workDir: row.workDir, sessionId: row.sessionId, home: activityHome });
+    return {
+      status: row.status, running, started: row.started, finished: row.finished, elapsed_seconds: elapsed,
+      pid_alive: running ? pidAlive(row.pid) : false, activity,
+      log_tail: tailLog(row.log, { allowedDir: path.join(config.focusRoot, 'tasks', slug) }),
     };
   }
 
@@ -411,6 +457,7 @@ export function createApp({
     }
     const priority = body.priority ?? 'medium';
     if (!PRIORITIES.includes(priority)) throw new HttpError(400, 'priority must be high, medium or low');
+    if (body.stage !== undefined && body.stage !== 'next' && body.stage !== 'backlog') throw new HttpError(400, 'stage must be next or backlog');
     const note = body.note ?? '';
     if (typeof note !== 'string') throw new HttpError(400, 'note must be text');
     if (note.length > MAX_NOTE) throw new HttpError(400, `note must be at most ${MAX_NOTE} characters`);
@@ -474,7 +521,13 @@ export function createApp({
     record('capture.created', `task:${slug}`, { slug, name, project, priority, has_note: note.trim() !== '', brief_written: briefWritten });
     refresh();
 
-    const result = { slug, project, brief_written: briefWritten, warning, opened: false };
+    // Quick-add: the new task goes straight to Next (the queue), not the backlog.
+    let staged = null;
+    if (body.stage === 'next') {
+      try { await runFocusCmd(['next', slug], 15000); staged = 'next'; refresh(); } catch (err) { warning = warning ?? `added, but could not move it to Next: ${err.message}`; }
+    }
+
+    const result = { slug, project, stage: staged ?? 'backlog', brief_written: briefWritten, warning, opened: false };
     if (body.open === true) {
       const o = await openTask(slug);
       result.opened = o.ok;
@@ -732,7 +785,17 @@ export function createApp({
       if (!need('GET')) return;
       return json(res, 200, buildInbox({ store, device: config.device, live: status.live }));
     }
-    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action)$/.exec(pathname);
+    if (pathname === '/api/needs-you') {
+      if (!need('GET')) return;
+      return json(res, 200, needsYou());
+    }
+    if (pathname === '/api/since') {
+      if (!need('GET')) return;
+      const ts = new URL(req.url, 'http://localhost').searchParams.get('ts') ?? '';
+      if (Number.isNaN(Date.parse(ts))) return fail(res, 400, 'ts must be an ISO timestamp');
+      return json(res, 200, buildSince({ tasks: store.tasks(), messages: store.messages(config.device), since: new Date(ts).toISOString() }));
+    }
+    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run)$/.exec(pathname);
     if (tm) {
       let slug;
       try { slug = decodeURIComponent(tm[1]); } catch { return fail(res, 400, 'bad slug'); }
@@ -741,6 +804,10 @@ export function createApp({
       if (tm[2] === 'thread') {
         if (!need('GET')) return;
         return json(res, 200, threadResponse(slug));
+      }
+      if (tm[2] === 'run') {
+        if (!need('GET')) return;
+        return json(res, 200, runInfo(slug) ?? { status: null, running: false });
       }
       if (!need('POST')) return;
       const body = await readJson(req);

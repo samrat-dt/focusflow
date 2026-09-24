@@ -80,6 +80,14 @@ cd <project folder> && npm start
 Easier: open "Focusflow.app" (in your Applications folder). In one click it starts the dashboard if it is not running, then opens it with the token. If macOS says it cannot verify the app, right-click it, choose Open, then choose Open again.
 <!-- help:end -->
 
+## Needs you, runs and undo
+
+- **Needs you** is the landing tab: work in review, unanswered agent questions (urgent first), failed runs, overdue and waiting items, each one click from acting. `GET /api/needs-you`; the same count is the Dock badge of Focusflow.app.
+- **Headless runs** show what they are doing (latest step read from the session transcript), elapsed time, a log tail and a **Cancel run** button (`GET /api/tasks/<slug>/run`). A banner is sent when a run finishes or stops unexpectedly.
+- **Approve, archive a project and Pause all** wait six seconds behind an **Undo** toast before anything is sent (and are sent at once if the page closes).
+- **Since you were away**: on open after 10+ minutes, a banner summarises reviews, replies, failed runs and approvals (`GET /api/since?ts=`).
+- Quick-add (`title #project !high`) puts a task straight into Next; the board can be filtered and cards dragged between lanes; the Inbox is two panes with inline reply. Press `?` for the legend.
+
 ## Task chat and inbox
 
 Open a task's drawer to see its thread and send a message. Replies are whatever the task's agent posts to your
