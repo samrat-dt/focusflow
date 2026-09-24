@@ -264,7 +264,12 @@ Each item will carry a date and a status (shipped / building / exploring).
 5. **Polish and proof**: motion, accessibility pass, empty/error states, dark option, sign and notarise the app,
    performance (SSE), visual and journey tests, final audit against this document.
 
-## 15. Decisions needed before the deep dive
+## 15. Decisions (answered 2026-09-25)
+
+Sidebar navigation; **light only**; ES modules with bundled Inter; edit tasks in the app; live market research
+(done: `RESEARCH.md`); Flow history kept high-level; plus "find more use cases for organisation, cleanliness and
+freedom" (done: `RESEARCH.md` §3). The list below is the original question set.
+
 
 1. **Sidebar navigation** replacing the top tabs (recommended), or keep tabs?
 2. **Light-only**, or light default plus an optional dark mode (recommended)?
