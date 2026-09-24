@@ -12,7 +12,7 @@ import (
 
 // newMessageID returns a new 8-hex-char message id, e.g. "07cfae37".
 // Overridable in tests for deterministic output. Matches the shape
-// control-center's parseFlowId regex expects: /\[([0-9a-f]{8})\]/.
+// tend's parseFocusId regex expects: /\[([0-9a-f]{8})\]/.
 var newMessageID = func() (string, error) {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -23,7 +23,7 @@ var newMessageID = func() (string, error) {
 
 // resolveCurrentTaskSlug returns the task bound to the active harness
 // session, or "" if this process isn't running inside one (a dispatch
-// session, control-center, or a bare terminal). Follows the skill's
+// session, tend, or a bare terminal). Follows the skill's
 // §10 rule: session_id is the single source of truth, found the same way
 // currentHarnessSessionID/doHere do. Falls back to $FOCUSFLOW_TASK for
 // contexts where the env var is set but the session_id lookup can't run

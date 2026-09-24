@@ -134,6 +134,7 @@ func projectMessage(db *sql.DB, root string, p *store.Project, args []string) in
 	fs := flagSet("project message")
 	fanout := fs.Bool("fanout", false, "also queue the message to every open subtask")
 	urgent := fs.Bool("urgent", false, "mark the messages urgent")
+	subtasksOnly := fs.Bool("subtasks-only", false, "fan out to the open subtasks WITHOUT messaging the coordinator (implies --fanout)")
 	var positional []string
 	for len(args) > 0 {
 		if err := fs.Parse(args); err != nil {
@@ -164,12 +165,16 @@ func projectMessage(db *sql.DB, root string, p *store.Project, args []string) in
 			ToTaskSlug: sql.NullString{String: toTask, Valid: true}, Body: body, Urgent: *urgent, CreatedAt: time.Now().Format(time.RFC3339)}
 		return id, store.InsertBusMessage(db, m)
 	}
-	id, err := send(agent, text)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	if *subtasksOnly {
+		*fanout = true
+	} else {
+		id, err := send(agent, text)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Message sent to %s [%s]\n", agent, id)
 	}
-	fmt.Printf("Message sent to %s [%s]\n", agent, id)
 	if *fanout {
 		rows, err := db.Query(`SELECT slug FROM tasks WHERE project_slug = ? AND archived_at IS NULL AND status != 'done' AND kind = 'regular' ORDER BY slug`, p.Slug)
 		if err != nil {

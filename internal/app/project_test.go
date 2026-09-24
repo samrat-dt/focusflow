@@ -138,7 +138,6 @@ func TestDoFreshNeedsForceOnlyWhenARealConversationExists(t *testing.T) {
 		t.Fatal("first do")
 	}
 	db := openTestDB(t)
-	task, _ := store.GetTask(db, "one")
 
 	// Stale session (no transcript on disk): --fresh just rotates it.
 	if rc := cmdDo([]string{"one", "--fresh"}); rc != 0 {
@@ -146,7 +145,7 @@ func TestDoFreshNeedsForceOnlyWhenARealConversationExists(t *testing.T) {
 	}
 
 	// A real transcript exists: one session per task, forever.
-	task, _ = store.GetTask(db, "one")
+	task, _ := store.GetTask(db, "one")
 	home, _ := os.UserHomeDir()
 	jsonl := filepath.Join(home, ".claude", "projects", EncodeCwdForClaude(task.WorkDir), task.SessionID.String+".jsonl")
 	os.MkdirAll(filepath.Dir(jsonl), 0o755)
@@ -195,5 +194,31 @@ func TestDoRemembersTerminalTabAndFocusesItInsteadOfOpeningAnother(t *testing.T)
 	t.Cleanup(iterm.Stub(func(args []string) (string, error) { return "missing", nil }))
 	if rc := cmdDo([]string{"tab"}); rc == 0 {
 		t.Error("with the tab gone the live-session guard must refuse")
+	}
+}
+
+func TestProjectMessageSubtasksOnlyAndInboxTaskInspection(t *testing.T) {
+	projectFixture(t)
+	db := openTestDB(t)
+	if rc := cmdProject([]string{"message", "resume", "just the tasks", "--subtasks-only"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if m, _ := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "resume-agent"}, false); len(m) != 0 {
+		t.Errorf("--subtasks-only must not message the coordinator: %+v", m)
+	}
+	if m, _ := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "a"}, false); len(m) != 1 {
+		t.Errorf("subtask a = %+v", m)
+	}
+
+	// Inspecting a task's mailbox from outside is NOT a delivery.
+	out := captureStdout(t, func() { cmdInbox([]string{"--task", "a", "--json"}) })
+	if !strings.Contains(out, "just the tasks") {
+		t.Errorf("inbox --task output %q", out)
+	}
+	if m, _ := store.ListBusMessages(db, store.MailboxFilter{TaskSlug: "a"}, true); m[0].DeliveredAt.Valid {
+		t.Error("inspecting must not stamp delivery")
+	}
+	if cmdInbox([]string{"--task", "a", "--as", "user"}) != 2 {
+		t.Error("--task and --as are mutually exclusive")
 	}
 }

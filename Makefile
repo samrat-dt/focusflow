@@ -7,10 +7,10 @@ VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 LDFLAGS  := -X main.version=$(VERSION)
 
 # Where `make install` puts the binary. ~/.local/bin is what launchd jobs
-# (control-center's launchd job) and hooks resolve, so there is exactly one
+# (tend's launchd job) and hooks resolve, so there is exactly one
 # installed copy — never a second one in the repo dir that can drift.
 PREFIX   ?= $(HOME)/.local
-CC_LABEL := local.control-center
+CC_LABEL := local.tend
 
 .PHONY: build install uninstall test clean vet race check fmt-check staticcheck cover
 

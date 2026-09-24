@@ -399,7 +399,7 @@ func (r statsReport) toJSON() statsJSON {
 	j.Tokens.Input, j.Tokens.Output, j.Tokens.CacheCreation, j.Tokens.CacheRead = r.Usage.Input, r.Usage.Output, r.Usage.CacheCreation, r.Usage.CacheRead
 	j.Projects = []statsProjectJSON{}
 	for _, p := range r.Projects {
-		j.Projects = append(j.Projects, statsProjectJSON{p.Slug, p.Tasks, p.Done, p.InFlight})
+		j.Projects = append(j.Projects, statsProjectJSON(p))
 	}
 	if r.Bus != nil {
 		j.Bus = &struct {

@@ -52,6 +52,7 @@ func resolveMailbox(db *sql.DB, as string) store.MailboxFilter {
 func cmdInboxList(args []string) int {
 	fs := flagSet("inbox")
 	as := fs.String("as", "", "assignee-level mailbox to read (e.g. user)")
+	taskMailbox := fs.String("task", "", "read this task's own mailbox (the dashboard uses it for delivery receipts)")
 	all := fs.Bool("all", false, "include already-read messages")
 	jsonOut := fs.Bool("json", false, "machine-readable JSON output")
 	if err := fs.Parse(args); err != nil {
@@ -74,14 +75,23 @@ func cmdInboxList(args []string) int {
 	}
 	defer db.Close()
 
+	if *as != "" && *taskMailbox != "" {
+		fmt.Fprintln(os.Stderr, "error: --as and --task are mutually exclusive")
+		return 2
+	}
 	mailbox := resolveMailbox(db, *as)
+	inspecting := *taskMailbox != ""
+	if inspecting {
+		mailbox = store.MailboxFilter{TaskSlug: *taskMailbox}
+	}
 	msgs, err := store.ListBusMessages(db, mailbox, *all)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	// Listing a task's OWN mailbox is a delivery: the session has now seen it.
-	if *as == "" && mailbox.TaskSlug != "" {
+	// Listing a task's OWN mailbox (from inside its session) is a delivery:
+	// the session has now seen it. Inspecting via --task is not.
+	if *as == "" && !inspecting && mailbox.TaskSlug != "" {
 		if _, err := store.MarkDelivered(db, mailbox); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
@@ -155,7 +165,7 @@ func cmdInboxPop(args []string) int {
 }
 
 // cmdInboxRead implements `focusflow inbox read <id> [--json]` — shows
-// and acks one specific message out of order. control-center calls this
+// and acks one specific message out of order. tend calls this
 // after it has already rendered the message locally and tolerates a
 // failure (id already gone), so a missing id is a plain error exit, not
 // a crash.
@@ -219,7 +229,7 @@ type jsonMessage struct {
 	DeliveredAt *string `json:"delivered_at,omitempty"`
 }
 
-// toJSONMessage shapes a BusMessage the way control-center's parseRow
+// toJSONMessage shapes a BusMessage the way tend's parseRow
 // expects: id, body, created_at, from.task_slug (nullable), reply_to
 // (nullable), urgent, mail.
 func toJSONMessage(m *store.BusMessage) jsonMessage {

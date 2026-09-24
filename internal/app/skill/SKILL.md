@@ -72,10 +72,22 @@ said.
   skill) via the `Write` tool when the user asks you to save a note. They
   are not in the database. They are permanent — archiving a task never
   deletes them.
-- **Status is 3 values.** `backlog`, `in-progress`, `done`. There is no
-  `blocked` state anymore. If the user is waiting on something or
-  someone, set `waiting_on` (see §5.6). If the user has set a task aside
-  permanently, `archive` it.
+- **Six stages.** `backlog` → `next` (the short literal queue) →
+  `in-progress` ⇄ `paused` (deliberately parked) → `review` (you believe the
+  goal is met; waiting for the user's approval) → `done`. There is no
+  `blocked` state: if the user is waiting on something or someone, set
+  `waiting_on` (see §5.6). If the user has set a task aside permanently,
+  `archive` it. **Whether a terminal is open is a separate fact from the
+  stage** — a paused task can still have an open terminal.
+- **When you believe a task's goal is met, run `focusflow review <slug>`**
+  instead of going quiet or marking it done yourself; the user approves
+  (`done`) from the dashboard. If the user asks you to pause, wrap up, save a
+  note, and stop.
+- **Projects have one permanent coordinator session** (a hidden task, listed
+  with `list tasks --kind all`). Messages to it are project-level asks: fold
+  them into an existing subtask (`focusflow message user/<task> "…"`) or
+  create one (`focusflow add task "…" --project <slug>`), then reply to the
+  user. It is never marked done and never gets a second session.
 
 ## 3. First-run detection (once per session)
 
@@ -152,6 +164,12 @@ Sessions
                              (codex sessions can only be bound with `do <ref> --here --harness codex`, never spawned)
   focusflow do <ref> --here  [--force]         (bind THIS harness session to the task — no new tab)
   focusflow done             <ref>
+  focusflow next|review      <ref>            (stage moves; `review` = ready for approval)
+  focusflow pause            <ref|project/<slug>>  (status → paused; a headless run is stopped, an open
+                                            terminal is asked to wrap up and stays open)
+  focusflow project agent|pause|unschedule <slug>
+  focusflow project message  <slug> "<text>" [--fanout | --subtasks-only] [--urgent]
+  focusflow project schedule <slug> --every <dur>
 
 Playbook runs
   focusflow run playbook <slug> [--dangerously-skip-permissions]  spawn a fresh run session (new task with kind=playbook_run)
@@ -164,7 +182,7 @@ Read
   focusflow show project [<ref>]     (defaults to $FOCUSFLOW_PROJECT)
   focusflow show playbook    [<ref>]
   focusflow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
-  focusflow list tasks    [--status backlog|in-progress|done] [--project <slug>]
+  focusflow list tasks    [--status backlog|next|in-progress|paused|review|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
                      [--include-archived] [--include-done] [--kind regular|playbook_run|all]
                      [--tag <t> ...] [--format table|json|tsv] [--no-color] [--no-truncate]
@@ -178,7 +196,7 @@ Edit / mutate
   focusflow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
   focusflow update task <ref> [--work-dir <path>] [--mkdir] [--name "<new name>"]
                         [--project <slug> | --clear-project]
-                        [--status backlog|in-progress|done] [--priority high|medium|low]
+                        [--status backlog|next|in-progress|paused|review|done] [--priority high|medium|low]
                         [--assignee <name>] [--clear-assignee]
                         [--due-date <date>] [--clear-due]
                         [--waiting "<who or what>"] [--clear-waiting]
@@ -196,6 +214,7 @@ Message bus
   focusflow inbox [--as <assignee>] [--all] [--json]
   focusflow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json] [--keep-unread]
   focusflow inbox read <id> [--json]
+  focusflow inbox --task <slug> [--all] [--json]   (inspect a task's mailbox from outside; not a delivery)
   focusflow inbox stats [--as <assignee>]    (answered/pending + wait-time metrics)
   focusflow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
   focusflow stats [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
@@ -1516,7 +1535,7 @@ priority, assignee, due date, waiting_on, tags, work_dir):
 
 ```
 focusflow update task <ref> [--work-dir <path>] [--mkdir]
-                      [--status backlog|in-progress|done] [--priority high|medium|low]
+                      [--status backlog|next|in-progress|paused|review|done] [--priority high|medium|low]
                       [--assignee <name>] [--clear-assignee]
                       [--due-date <date>] [--clear-due]
                       [--waiting "<who or what>"] [--clear-waiting]

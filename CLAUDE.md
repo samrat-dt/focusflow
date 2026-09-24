@@ -11,7 +11,7 @@ A Go CLI (`focusflow`) that manages personal tasks and bootstraps per-task Claud
 make build
 # or: go build -o focusflow .
 
-# Install: copies the binary to ~/.local/bin (single copy), refreshes skill + hooks, restarts control-center
+# Install: copies the binary to ~/.local/bin (single copy), refreshes skill + hooks, restarts tend
 make install
 
 # Run all tests (fast — no network, no real iTerm/Claude)
@@ -38,6 +38,7 @@ focusflow/
 │   │   ├── hook.go                  # session-start / user-prompt-submit / stop hooks
 │   │   ├── message.go inbox.go watch.go   # message bus
 │   │   ├── stats.go transcript.go workdir.go playbook.go
+│   │   ├── stages.go project.go     # next/review/pause; project agents, message, schedule
 │   │   ├── backup.go                # focusflow backup / restore (VACUUM INTO snapshot)
 │   │   ├── doctor.go                # focusflow doctor [--fix]
 │   │   ├── perms.go                 # 0700/0600 hardening of ~/.focusflow

@@ -205,12 +205,14 @@ focusflow backup [--out <dir>] [--keep N]   # consistent snapshot of ~/.focusflo
 focusflow restore <archive> --force   # validate, then replace data (previous data is kept under backups/pre-restore-*)
 focusflow version                     # build version + commit
 focusflow stats [--since 30d] [--project <slug>] [--card]
+focusflow next|review|pause <ref>       # stages: backlog → next → in-progress ⇄ paused → review → done
+focusflow project message <slug> "…" [--fanout]   # one permanent coordinator session per project
 focusflow watch <task|project|assignee>   # get broadcasts fanned out to your task's inbox
 focusflow inbox stats
 ```
 
 `make install` copies the binary to `~/.local/bin` (the one installed copy), refreshes the
 skill and the three Claude Code hooks (SessionStart, UserPromptSubmit, Stop), and restarts a
-control-center launchd job if one is installed. The database runs in WAL mode with a 30s busy
+tend launchd job if one is installed. The database runs in WAL mode with a 30s busy
 timeout, and its schema is versioned (`PRAGMA user_version`); a database newer than the binary is
 refused rather than opened. Everything under `~/.focusflow` is private to your user (0700/0600).

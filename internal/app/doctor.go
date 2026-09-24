@@ -28,7 +28,7 @@ type finding struct {
 type doctorCtx struct {
 	root       string
 	home       string
-	launchdCC  string // path of control-center's launchd plist ("" = skip)
+	launchdCC  string // path of tend's launchd plist ("" = skip)
 	pathBinary func() string
 	binVersion func(bin string) string
 	now        time.Time
@@ -46,7 +46,7 @@ func defaultDoctorCtx() (doctorCtx, error) {
 	return doctorCtx{
 		root:      root,
 		home:      home,
-		launchdCC: filepath.Join(home, "Library", "LaunchAgents", "local.control-center.plist"),
+		launchdCC: filepath.Join(home, "Library", "LaunchAgents", "local.tend.plist"),
 		pathBinary: func() string {
 			p, _ := exec.LookPath("focusflow")
 			return p
@@ -296,23 +296,23 @@ func checkControlCenter(c doctorCtx) []finding {
 	}
 	raw, err := os.ReadFile(c.launchdCC)
 	if err != nil {
-		return nil // control-center not installed — nothing to check
+		return nil // tend not installed — nothing to check
 	}
 	m := plistBinRe.FindSubmatch(raw)
 	if m == nil {
-		return []finding{warn("control-center", "launchd job has no FOCUSFLOW_BIN", "")}
+		return []finding{warn("tend", "launchd job has no FOCUSFLOW_BIN", "")}
 	}
 	bin := string(m[1])
 	if _, err := os.Stat(bin); err != nil {
-		return []finding{fail("control-center", "FOCUSFLOW_BIN "+bin+" does not exist", "point the launchd job at the installed focusflow")}
+		return []finding{fail("tend", "FOCUSFLOW_BIN "+bin+" does not exist", "point the launchd job at the installed focusflow")}
 	}
 	if v := c.binVersion(bin); v != "" {
 		self := c.binVersion(os.Args[0])
 		if self != "" && v != self {
-			return []finding{warn("control-center", fmt.Sprintf("uses %s (%s), this is %s", bin, v, self), "make install")}
+			return []finding{warn("tend", fmt.Sprintf("uses %s (%s), this is %s", bin, v, self), "make install")}
 		}
 	}
-	return []finding{ok("control-center", "uses "+bin)}
+	return []finding{ok("tend", "uses "+bin)}
 }
 
 func cmdDoctor(args []string) int {

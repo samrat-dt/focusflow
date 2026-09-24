@@ -11,7 +11,7 @@ import (
 )
 
 // CLI flag-set contract tests. The public flags of these commands are
-// what scripts, hooks and control-center rely on, so they are pinned:
+// what scripts, hooks and tend rely on, so they are pinned:
 // removing or renaming one must be a deliberate change to the fixtures
 // below.
 //

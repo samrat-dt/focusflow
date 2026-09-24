@@ -248,7 +248,7 @@ func NullIfEmpty(s string) any {
 // pragmas ride in the DSN — not a one-off db.Exec — so EVERY connection in
 // database/sql's pool inherits them (a plain `PRAGMA foreign_keys = ON`
 // only affects the single connection that ran it):
-//   - journal_mode(WAL): readers (control-center, other commands, hooks)
+//   - journal_mode(WAL): readers (tend, other commands, hooks)
 //     never block on a writer and vice versa.
 //   - busy_timeout(30000): contention waits instead of failing SQLITE_BUSY.
 //   - foreign_keys(1): enforced on all connections.
