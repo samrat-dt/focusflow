@@ -3,10 +3,14 @@ package app
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"focusflow/internal/store"
 )
 
 func TestBackupRestoreRoundTrip(t *testing.T) {
@@ -176,5 +180,71 @@ func TestBackupScheduleInstallUninstall(t *testing.T) {
 	}
 	if cmdBackup([]string{"schedule", "bogus"}) != 2 {
 		t.Error("unknown schedule subcommand must be a usage error")
+	}
+}
+
+// A backup taken while another writer is active must still produce an
+// intact, restorable database.
+func TestBackupWhileDBInUse(t *testing.T) {
+	root := setupRoot(t)
+	seedTask(t, "base")
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	failed := make(chan int, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if rc := cmdAdd([]string{"task", fmt.Sprintf("busy-%d", i)}); rc != 0 {
+				select {
+				case failed <- rc:
+				default:
+				}
+				return
+			}
+		}
+	}()
+
+	var archives []string
+	for i := 0; i < 3; i++ {
+		a, err := createBackup(root, filepath.Join(root, "backups"))
+		if err != nil {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("backup %d during writes: %v", i, err)
+		}
+		archives = append(archives, a)
+	}
+	close(stop)
+	wg.Wait()
+	select {
+	case rc := <-failed:
+		t.Fatalf("concurrent writer failed rc=%d", rc)
+	default:
+	}
+
+	for _, a := range archives {
+		stage := t.TempDir()
+		if err := extractBackup(a, stage); err != nil {
+			t.Fatal(err)
+		}
+		db, err := store.OpenDB(filepath.Join(stage, "focusflow.db"))
+		if err != nil {
+			t.Fatalf("open %s: %v", a, err)
+		}
+		var res string
+		db.QueryRow("PRAGMA integrity_check").Scan(&res)
+		var n int
+		db.QueryRow("SELECT COUNT(*) FROM tasks WHERE slug='base'").Scan(&n)
+		db.Close()
+		if res != "ok" || n != 1 {
+			t.Errorf("%s: integrity=%q base=%d", a, res, n)
+		}
 	}
 }
