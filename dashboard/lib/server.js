@@ -29,10 +29,6 @@ import { helpContent, appFragments } from './help.js';
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const STATIC = {
   '/': ['ui/index.html', 'text/html; charset=utf-8'],
-  '/classic': ['index.html', 'text/html; charset=utf-8'],
-  '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
-  '/logic.js': ['logic.js', 'text/javascript; charset=utf-8'],
-  '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/help.js': ['help.js', 'text/javascript; charset=utf-8'],
   '/help.css': ['help.css', 'text/css; charset=utf-8'],
 };
@@ -927,7 +923,7 @@ export function createApp({
       if (!entry) return fail(res, 404, 'not found');
       if (req.method !== 'GET') return fail(res, 405, 'method not allowed', { allow: 'GET' });
       let body = readText(path.join(PUBLIC_DIR, entry[0]));
-      if (body !== null && (pathname === '/' || pathname === '/classic')) body = withHelpData(body, port);
+      if (body !== null && pathname === '/') body = withHelpData(body, port);
       return body === null ? fail(res, 404, 'not found') : send(res, 200, body, entry[1]);
     }
 

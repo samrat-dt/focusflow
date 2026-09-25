@@ -14,7 +14,7 @@ and staying in charge of it. Everything it changes goes through the `focusflow` 
   its session; the run is tracked, can be stopped, and is flagged when it goes quiet or fails.
 
 The front end is dependency-free ES modules in `public/ui/` (design tokens and components in `public/ui/css/app.css`,
-Inter bundled in `public/ui/fonts/`). The previous screen is still served at `/classic` until it is removed.
+Inter bundled in `public/ui/fonts/`).
 
 Check the real journeys end to end (headless Chrome, a throwaway sandbox, a fake `claude`): `npm run e2e`
 (or `make e2e` from the repo root).

@@ -73,8 +73,9 @@ test('static pages need no token but are Host-checked, and only the allowlist is
   const idx = await req('/', { token: null });
   assert.equal(idx.status, 200);
   assert.match(idx.headers['content-type'], /text\/html/);
-  assert.equal((await req('/app.js', { token: null })).status, 200);
-  assert.equal((await req('/style.css', { token: null })).status, 200);
+  assert.equal((await req('/ui/js/main.js', { token: null })).status, 200);
+  assert.equal((await req('/ui/css/app.css', { token: null })).status, 200);
+  for (const gone of ['/classic', '/app.js', '/style.css', '/logic.js']) assert.equal((await req(gone, { token: null })).status, 404, `${gone} is gone`);
   assert.equal((await req('/package.json', { token: null })).status, 404);
   assert.equal((await req('/../package.json', { token: null })).status, 404);
   assert.equal((await req('/%2e%2e/package.json', { token: null })).status, 404);

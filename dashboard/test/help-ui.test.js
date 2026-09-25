@@ -23,7 +23,7 @@ class El {
 }
 
 function page({ withSteps = true, fetchImpl } = {}) {
-  const html = read('index.html');
+  const html = read('ui/index.html');
   const els = {};
   for (const m of html.matchAll(/<[^>]*\sid="([^"]+)"[^>]*>/g)) els[m[1]] = new El(m[1], /\shidden(\s|>|=)/.test(m[0]));
   els['help-data'].textContent = withSteps ? JSON.stringify({ html: appFragments(helpContent({ projectDir: DIR, port: 4177 })) }) : '';
@@ -33,7 +33,7 @@ function page({ withSteps = true, fetchImpl } = {}) {
   const copied = [];
   const ctx = {
     document: {
-      getElementById: id => { assert.ok(els[id], `#${id} is not in index.html`); return els[id]; },
+      getElementById: id => { assert.ok(els[id], `#${id} is not in ui/index.html`); return els[id]; },
       createElement: () => new El(),
       addEventListener: (t, fn) => { (docListeners[t] ||= []).push(fn); },
     },
@@ -193,15 +193,17 @@ test('if the embedded steps are missing, the panel still explains where the help
   assert.match(p.els['token-panel-body'].textContent, /Help file/);
 });
 
-test('app.js sends every request through Help.request and does not repeat an error the help already shows', () => {
-  const js = read('app.js');
-  assert.match(js, /Help\.request\(/);
-  assert.ok(!/await fetch\(/.test(js), 'app.js must not fetch on its own');
-  assert.match(js, /function reportError\(err\) \{\s*if \(!err\.helped\) showBanner\(say\(err\)\);/);
-  assert.match(js, /loadInbox\(\)\.catch\(reportError\)/);
-  assert.match(js, /Help\.init\(\{/);
-  assert.match(js, /onRecovered: \(\) => reload\(\)/);
-  const html = read('index.html');
-  assert.ok(html.indexOf('src="/help.js"') < html.indexOf('src="/app.js"'), 'help.js must load before app.js');
+test('the app sends every request through Help.request, and help loads first with its styles', () => {
+  const api = read('ui/js/api.js');
+  assert.match(api, /helpApi\(\)\.request\(/);
+  const fetches = [...api.matchAll(/fetch\(/g)].length;
+  assert.equal(fetches, 1, 'the only direct fetch is the page-unload beacon');
+  assert.match(api, /keepalive: true/);
+  const main = read('ui/js/main.js');
+  assert.match(main, /helpApi\(\)\.init\(\{ onRecovered: \(\) => load\(\)/);
+  const html = read('ui/index.html');
+  assert.ok(html.indexOf('src="/help.js"') < html.indexOf('src="/ui/js/main.js"'), 'help.js must load before the app');
   assert.match(html, /href="\/help\.css"/);
+  for (const id of ['help-data', 'token-panel', 'token-panel-body', 'lost-banner', 'lost-banner-body']) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.ok(!/<script>(?!\s*<\/script>)|<style>|\sstyle="|\son[a-z]+="/i.test(html), 'no inline script, style or handlers (the CSP forbids them)');
 });

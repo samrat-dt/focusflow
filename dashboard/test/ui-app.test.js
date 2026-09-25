@@ -22,6 +22,27 @@ test('wording helpers', () => {
   assert.equal(L.STAGE_NAME.next, 'Up next');
 });
 
+test('parseQuickAdd takes a known #project and a !priority out of the name; unknown #words stay', () => {
+  const projects = ['website', 'ops'];
+  assert.deepEqual({ ...L.parseQuickAdd('Write launch note #website !high', projects) }, { name: 'Write launch note', project: 'website', priority: 'high' });
+  assert.deepEqual({ ...L.parseQuickAdd('#ops   Rotate keys', projects) }, { name: 'Rotate keys', project: 'ops', priority: null });
+  assert.deepEqual({ ...L.parseQuickAdd('Fix issue #123 today', projects) }, { name: 'Fix issue #123 today', project: null, priority: null });
+  assert.equal(L.parseQuickAdd('   ', projects).name, '');
+});
+
+test('filterTasks by project, priority, stage and text', () => {
+  const list = [
+    { name: 'Alpha', slug: 'alpha', project: 'p1', priority: 'high', status: 'next', tags: ['ui'] },
+    { name: 'Beta', slug: 'beta', project: null, priority: 'low', status: 'review', tags: [] },
+    { name: 'Gamma', slug: 'gamma', project: 'p1', priority: 'low', status: 'next', tags: [] },
+  ];
+  assert.deepEqual(L.filterTasks(list, { project: 'p1' }).map(t => t.slug), ['alpha', 'gamma']);
+  assert.deepEqual(L.filterTasks(list, { project: '__none__' }).map(t => t.slug), ['beta']);
+  assert.deepEqual(L.filterTasks(list, { priority: 'low', text: 'ga' }).map(t => t.slug), ['gamma']);
+  assert.deepEqual(L.filterTasks(list, { stage: 'review' }).map(t => t.slug), ['beta']);
+  assert.deepEqual(L.filterTasks(list, { text: 'ui' }).map(t => t.slug), ['alpha'], 'tags match too');
+});
+
 test('primaryAction gives each stage one obvious next step', () => {
   const p = status => L.primaryAction({ status }).label;
   assert.deepEqual(['backlog', 'next', 'in-progress', 'paused', 'review', 'done'].map(p), ['Move to Up next', 'Start', 'Message', 'Resume', 'Approve', 'Reopen']);
@@ -73,7 +94,6 @@ test('the new app is served at / with recovery help embedded; /ui serves only it
   assert.equal(root.status, 200);
   assert.match(root.body, /\/ui\/js\/main\.js/);
   assert.match(root.body, /id="help-data">\{/);
-  assert.equal((await h.get('/classic', { token: null })).status, 200);
   const css = await h.get('/ui/css/app.css', { token: null });
   assert.equal(css.status, 200);
   assert.equal((await h.get('/ui/fonts/inter.woff2', { token: null })).status, 200);
