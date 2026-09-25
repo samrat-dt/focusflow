@@ -210,14 +210,10 @@ export function inlineTokens(s) {
 }
 
 // ---- Activity map layout: deterministic, so nothing jumps between refreshes ----
-// You in the centre; one cluster per project on a ring around you; a project's assistant at the centre of
-// its cluster, its tasks around it. Returns positions and cluster labels in a width×height box.
-export function layoutActivity(nodes, { width = 1000, height = 620 } = {}) {
-  const cx = width / 2;
-  const cy = height / 2;
-  const pos = new Map();
-  const labels = [];
-  pos.set('you', { x: cx, y: cy });
+// You in the centre; one cluster per project on a ring around you, each given room in proportion to its
+// size; a project's assistant at the centre of its cluster, its tasks on a circle around it with their labels
+// pointing outwards. The canvas grows to fit. Returns positions, label anchors, cluster labels and the size.
+export function layoutActivity(nodes, { minWidth = 1060, minHeight = 560 } = {}) {
   const groups = new Map();
   for (const n of nodes) {
     if (n.id === 'you') continue;
@@ -226,25 +222,42 @@ export function layoutActivity(nodes, { width = 1000, height = 620 } = {}) {
     groups.get(key).push(n);
   }
   const keys = [...groups.keys()].sort((a, b) => groups.get(b).length - groups.get(a).length || a.localeCompare(b));
-  const rx = Math.min(width * 0.36, 360);
-  const ry = Math.min(height * 0.34, 215);
-  // Start so that two clusters sit left and right of you (wide screens), three form a triangle, etc.
-  const start = keys.length === 2 ? 0 : -Math.PI / 2;
-  keys.forEach((key, i) => {
-    const angle = start + (2 * Math.PI * i) / Math.max(1, keys.length);
-    const gx = keys.length === 1 ? cx + rx * 0.62 : cx + rx * Math.cos(angle);
-    const gy = keys.length === 1 ? cy : cy + ry * Math.sin(angle);
+  const clusters = keys.map(key => {
     const members = [...groups.get(key)].sort((a, b) => (a.kind === 'assistant' ? -1 : b.kind === 'assistant' ? 1 : a.id.localeCompare(b.id)));
     const hub = members[0]?.kind === 'assistant' ? members.shift() : null;
-    if (hub) pos.set(hub.id, { x: gx, y: gy });
-    const r = members.length <= 1 && !hub ? 0 : Math.min(95, 44 + members.length * 9);
-    members.forEach((m, j) => {
-      const a = -Math.PI / 2 + (2 * Math.PI * j) / Math.max(1, members.length);
-      pos.set(m.id, { x: gx + r * Math.cos(a), y: gy + r * Math.sin(a) });
-    });
-    labels.push({ key, x: gx, y: Math.max(16, gy - r - (hub ? 34 : 30)) });
+    const r = members.length <= 1 && !hub ? 0 : Math.min(190, 40 + members.length * 13);
+    return { key, members, hub, r, room: r + (r === 0 ? 140 : members.length > 4 ? 190 : 120) }; // room: the cluster plus its (sideways) labels
   });
-  return { pos, labels };
+  const totalRoom = clusters.reduce((t, c) => t + c.room, 0);
+  const biggest = Math.max(0, ...clusters.map(c => c.room));
+  // A ring long enough that neighbouring clusters do not overlap, and clear of you in the middle.
+  const R = clusters.length <= 1 ? (clusters[0]?.room ?? 0) + 60 : Math.max(240, (totalRoom * 2) / (2 * Math.PI) * 1.05, biggest + 90);
+  // Side room for labels that point outwards, in the same units the labels will be drawn at.
+  const base = Math.ceil(2 * (R + biggest) + 40);
+  const width = Math.max(minWidth, Math.ceil(base + 2 * 150 * Math.max(1, base / minWidth)));
+  const height = Math.max(minHeight, Math.ceil(2 * (R * 0.78 + biggest) + 40));
+  const cx = width / 2;
+  const cy = height / 2;
+  const pos = new Map([['you', { x: cx, y: cy }]]);
+  const anchor = new Map();
+  const labels = [];
+  let angle = clusters.length === 2 ? 0 : -Math.PI / 2;
+  clusters.forEach((c, i) => {
+    const span = (2 * Math.PI * c.room) / Math.max(1, totalRoom);
+    const mid = clusters.length === 1 ? 0 : angle + (i === 0 && clusters.length !== 2 ? 0 : span / 2);
+    if (!(i === 0 && clusters.length !== 2)) angle += span; else angle += span / 2;
+    const gx = clusters.length === 1 ? cx + R * 0.7 : cx + R * Math.cos(mid);
+    const gy = clusters.length === 1 ? cy : cy + R * 0.78 * Math.sin(mid);
+    if (c.hub) { pos.set(c.hub.id, { x: gx, y: gy }); anchor.set(c.hub.id, 'below'); }
+    c.members.forEach((m, j) => {
+      const a = -Math.PI / 2 + (2 * Math.PI * j) / Math.max(1, c.members.length);
+      pos.set(m.id, { x: gx + c.r * Math.cos(a), y: gy + c.r * Math.sin(a) });
+      // The top of a cluster belongs to its heading: labels there go sideways, never above.
+      anchor.set(m.id, c.r === 0 ? 'below' : Math.abs(Math.cos(a)) < 0.35 ? (Math.sin(a) < 0 ? 'right' : 'below') : Math.cos(a) > 0 ? 'right' : 'left');
+    });
+    labels.push({ key: c.key, x: gx, y: Math.max(16, gy - c.r - (c.r === 0 ? 26 : 30)) });
+  });
+  return { pos, anchor, labels, width, height };
 }
 
 // A curve from a to b that bows sideways, so two-way and parallel lines stay apart.

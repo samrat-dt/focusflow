@@ -45,10 +45,10 @@ function nameOf(id) { return data.nodes.find(n => n.id === id)?.name ?? id; }
 function involves(ev, id) { return ev.from === id || ev.to.includes(id); }
 
 function map() {
-  // Close to the size it is shown at, so labels stay readable.
-  const W = 820;
-  const H = 540;
-  const { pos, labels } = layoutActivity(data.nodes, { width: W, height: H });
+  const { pos, labels, anchor, width: W, height: H } = layoutActivity(data.nodes);
+  // The map is scaled to fit its box; grow sizes with the canvas so text and dots look the same size.
+  const k = Math.max(1, W / 1060);
+  const fs = px => (px * k).toFixed(1);
   const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'amap', role: 'img', 'aria-label': 'Map of who talks to whom. The feed beside it lists the same messages.' });
   const defs = s('defs');
   for (const [k, st] of Object.entries(EDGE_STYLE)) {
@@ -61,7 +61,7 @@ function map() {
 
   for (const l of labels) {
     const title = l.key === '' ? 'No project' : l.key === '@people' ? 'People' : (data.nodes.find(n => n.project === l.key && n.kind === 'assistant')?.name.replace(/ assistant$/, '') ?? data.nodes.find(n => n.project === l.key)?.projectName ?? l.key);
-    svg.append(s('text', { x: l.x, y: l.y, class: 'amap-cluster', 'text-anchor': 'middle' }, title));
+    svg.append(s('text', { x: l.x, y: l.y - (k - 1) * 12, class: 'amap-cluster', 'text-anchor': 'middle', 'font-size': fs(11.5), 'stroke-width': (4 * k).toFixed(1) }, title));
   }
 
   // lines first, nodes on top
@@ -76,12 +76,12 @@ function map() {
     const st = EDGE_STYLE[e.kind];
     const dim = (focusNode && e.from !== focusNode && e.to !== focusNode) || (focusEdge && focusEdge !== e.id);
     const d = curvePath(a, b, { you: 0.14, agents: 0.14, broadcast: 0.32, watch: -0.24 }[e.kind]); // each kind bows its own way, so shared pairs stay apart
-    const width = e.kind === 'watch' ? 1.5 : 1.5 + Math.min(4.5, Math.log2(e.count + 1) * 1.3);
+    const width = k * (e.kind === 'watch' ? 1.5 : 1.5 + Math.min(4.5, Math.log2(e.count + 1) * 1.3));
     const g = s('g', { class: `amap-edge${dim ? ' dim' : ''}`, tabindex: 0, role: 'button', 'aria-label': `${st.label}: ${nameOf(e.from)} ${e.both ? 'and' : 'to'} ${nameOf(e.to)}, ${e.count} message${e.count === 1 ? '' : 's'}` });
     const path = s('path', { d, fill: 'none', stroke: st.stroke, 'stroke-width': width, 'stroke-dasharray': st.dash, 'stroke-linecap': 'round', 'marker-end': `url(#arrow-${e.kind})`, 'marker-start': e.both ? `url(#arrow-${e.kind})` : null, id: `p-${btoa(unescape(encodeURIComponent(e.id))).replace(/[^a-z0-9]/gi, '')}` });
-    g.append(s('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': 16 }), path);
+    g.append(s('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': 16 * k }), path);
     if (e.recent && !reduceMotion()) {
-      const dot = s('circle', { r: 4, fill: st.stroke });
+      const dot = s('circle', { r: 4 * k, fill: st.stroke });
       dot.append(s('animateMotion', { dur: '2.4s', repeatCount: 'indefinite', path: d }));
       g.append(dot);
     }
@@ -95,23 +95,27 @@ function map() {
   for (const n of data.nodes) {
     const p = pos.get(n.id);
     if (!p) continue;
-    const r = n.kind === 'you' ? 26 : n.kind === 'assistant' ? 18 : 13;
+    const r = k * (n.kind === 'you' ? 26 : n.kind === 'assistant' ? 18 : 13);
     const dim = (focusNode && focusNode !== n.id && !data.edges.some(e => (e.from === focusNode && e.to === n.id) || (e.to === focusNode && e.from === n.id)))
       || (focusEdge && !data.edges.some(e => e.id === focusEdge && (e.from === n.id || e.to === n.id)));
     const ring = n.kind === 'you' ? 'var(--accent)' : STATUS_COLOR[n.status] ?? 'var(--backlog)';
     const unread = data.edges.filter(e => e.from === n.id && e.to === 'you').reduce((t, e) => t + e.unread, 0);
     const g = s('g', { class: `amap-node${dim ? ' dim' : ''}${focusNode === n.id ? ' on' : ''}`, transform: `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`, tabindex: 0, role: 'button',
       'aria-label': `${n.name}${n.kind === 'you' ? '' : `, ${n.kind === 'assistant' ? 'project assistant' : STAGE_NAME[n.status] ?? n.status}`}${n.working || n.running ? ', working now' : ''}${unread ? `, ${unread} unread for you` : ''}` });
-    if (n.working || n.running) g.append(s('circle', { r: r + 7, class: 'amap-pulse', stroke: 'var(--progress)' }));
-    g.append(s('circle', { r, fill: n.kind === 'you' ? 'var(--accent)' : 'var(--surface)', stroke: ring, 'stroke-width': n.kind === 'you' ? 0 : 3 }));
-    if (n.kind === 'you') g.append(s('text', { y: 5, 'text-anchor': 'middle', class: 'amap-you' }, 'You'));
-    if (n.kind === 'assistant') g.append(s('path', { d: 'M0,-6 L1.8,-1.8 L6,0 L1.8,1.8 L0,6 L-1.8,1.8 L-6,0 L-1.8,-1.8 z', fill: ring }));
+    if (n.working || n.running) g.append(s('circle', { r: r + 7 * k, class: 'amap-pulse', stroke: 'var(--progress)', 'stroke-width': 2 * k }));
+    g.append(s('circle', { r, fill: n.kind === 'you' ? 'var(--accent)' : 'var(--surface)', stroke: ring, 'stroke-width': n.kind === 'you' ? 0 : 3 * k }));
+    if (n.kind === 'you') g.append(s('text', { y: 5 * k, 'text-anchor': 'middle', class: 'amap-you', 'font-size': fs(12) }, 'You'));
+    if (n.kind === 'assistant') g.append(s('path', { d: 'M0,-6 L1.8,-1.8 L6,0 L1.8,1.8 L0,6 L-1.8,1.8 L-6,0 L-1.8,-1.8 z', fill: ring, transform: `scale(${k.toFixed(2)})` }));
     if (unread) {
-      g.append(s('circle', { cx: r * 0.75, cy: -r * 0.75, r: 8, fill: 'var(--danger)' }));
-      g.append(s('text', { x: r * 0.75, y: -r * 0.75 + 4, 'text-anchor': 'middle', class: 'amap-badge' }, String(unread)));
+      g.append(s('circle', { cx: r * 0.75, cy: -r * 0.75, r: 8 * k, fill: 'var(--danger)' }));
+      g.append(s('text', { x: r * 0.75, y: -r * 0.75 + 4 * k, 'text-anchor': 'middle', class: 'amap-badge', 'font-size': fs(10) }, String(unread)));
     }
-    if (n.kind !== 'you') g.append(s('text', { y: r + 16, 'text-anchor': 'middle', class: 'amap-label' }, trunc(n.name, 24)));
-    if (n.nudges) g.append(s('text', { y: r + 30, 'text-anchor': 'middle', class: 'amap-sub' }, `nudged ${n.nudges}×`));
+    if (n.kind !== 'you') {
+      const side = anchor.get(n.id) ?? 'below';
+      const at = { below: { x: 0, y: r + 16 * k, a: 'middle' }, above: { x: 0, y: -r - 8 * k, a: 'middle' }, right: { x: r + 6 * k, y: 4 * k, a: 'start' }, left: { x: -r - 6 * k, y: 4 * k, a: 'end' } }[side];
+      g.append(s('text', { x: at.x, y: at.y, 'text-anchor': at.a, class: 'amap-label', 'font-size': fs(13), 'stroke-width': (4 * k).toFixed(1) }, trunc(n.name, side === 'below' || side === 'above' ? 22 : 24)));
+      if (n.nudges) g.append(s('text', { x: at.x, y: at.y + 14 * k, 'text-anchor': at.a, class: 'amap-sub', 'font-size': fs(11) }, `nudged ${n.nudges}×`));
+    }
     g.append(s('title', {}, n.name));
     const pick = () => { selected = focusNode === n.id ? null : { type: 'node', id: n.id }; notify(); };
     g.addEventListener('click', pick);

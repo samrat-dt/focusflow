@@ -61,13 +61,22 @@ test('dropAction maps every board move, and refuses to move a project assistant'
 
 test('layoutActivity puts you in the middle, clusters projects, and the assistant at its cluster centre', () => {
   const nodes = [{ id: 'you', kind: 'you' }, { id: 'wa', kind: 'assistant', project: 'web' }, { id: 'a', kind: 'task', project: 'web' }, { id: 'b', kind: 'task', project: 'web' }, { id: 'o', kind: 'task', project: 'ops' }];
-  const { pos, labels } = L.layoutActivity(nodes, { width: 1000, height: 600 });
-  assert.deepEqual(pos.get('you'), { x: 500, y: 300 });
+  const { pos, labels, width, height, anchor } = L.layoutActivity(nodes);
+  assert.deepEqual(pos.get('you'), { x: width / 2, y: height / 2 });
+  assert.ok(['left', 'right', 'above', 'below'].includes(anchor.get('a')));
   const wa = pos.get('wa');
   for (const id of ['a', 'b']) { const p = pos.get(id); assert.ok(Math.hypot(p.x - wa.x, p.y - wa.y) > 40, `${id} sits around its assistant`); }
   assert.equal(labels.length, 2);
-  assert.deepEqual(L.layoutActivity(nodes, { width: 1000, height: 600 }).pos.get('a'), pos.get('a'), 'deterministic');
-  for (const [, p] of pos) assert.ok(p.x > 0 && p.x < 1000 && p.y > 0 && p.y < 600, 'inside the box');
+  assert.deepEqual(L.layoutActivity(nodes).pos.get('a'), pos.get('a'), 'deterministic');
+  for (const [, p] of pos) assert.ok(p.x > 0 && p.x < width && p.y > 0 && p.y < height, 'inside the box');
+  // A crowded map: clusters must not overlap each other, and everything stays inside the canvas.
+  const many = [{ id: 'you', kind: 'you' }];
+  for (const [proj, count] of [['big', 11], ['mid', 5], ['a', 1], ['b', 1], ['c', 2], ['d', 1], ['e', 1]]) for (let i = 0; i < count; i++) many.push({ id: `${proj}${i}`, kind: 'task', project: proj });
+  const L2 = L.layoutActivity(many);
+  for (const [, p] of L2.pos) assert.ok(p.x > 0 && p.x < L2.width && p.y > 0 && p.y < L2.height, 'crowded map stays inside');
+  const centre = key => { const ids = many.filter(n => n.project === key).map(n => L2.pos.get(n.id)); return { x: ids.reduce((t, p) => t + p.x, 0) / ids.length, y: ids.reduce((t, p) => t + p.y, 0) / ids.length }; };
+  const big = centre('big');
+  for (const k of ['mid', 'a', 'c']) { const o = centre(k); assert.ok(Math.hypot(o.x - big.x, o.y - big.y) > 150, `${k} keeps clear of the big cluster`); }
   assert.match(L.curvePath({ x: 0, y: 0 }, { x: 100, y: 0 }), /^M0\.0,0\.0 Q50\.0,16\.0 100\.0,0\.0$/);
 });
 
