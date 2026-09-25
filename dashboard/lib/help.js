@@ -32,32 +32,32 @@ export function helpContent({ projectDir = null, port = 4177, label = LABEL } = 
     app: APP_NAME,
     address,
     token: {
-      heading: 'Chrome forgot the access token',
-      what: 'The dashboard is running, but this Chrome does not have its access token, so it cannot show your tasks.',
+      heading: 'This window needs its access key',
+      what: 'Focusflow is running, but this window does not have the private key that lets it show your work (this happens after clearing browser data, or in a new browser).',
       steps: [
         { text: OPEN_TERMINAL },
-        { text: 'Copy this command, paste it into Terminal, and press Enter:', command: `cd ${dir} && npm run url -- --open` },
-        { text: 'Chrome opens the dashboard and remembers the token. You will not need to do this again.' },
+        { text: 'Copy this command, paste it into Terminal, and press Enter:', command: 'focusflow dashboard open' },
+        { text: 'Focusflow opens with its key and remembers it. You will not need to do this again.' },
       ],
     },
     server: {
-      heading: "Chrome says it can't connect",
-      what: 'The dashboard is not running, so there is nothing to connect to.',
+      heading: 'Focusflow is not running',
+      what: 'The Focusflow service on this Mac is not running, so there is nothing to show yet.',
       // Used instead of `heading`/`what` when the page is open and the server goes away.
-      stopped: { heading: 'The dashboard stopped answering', what: 'It is not running any more, so this page cannot update. This message clears by itself when it is back.' },
+      stopped: { heading: 'Focusflow stopped answering', what: 'Its service on this Mac stopped, so this page cannot update. This message clears by itself as soon as it is back.' },
       steps: [
         { text: OPEN_TERMINAL },
-        { text: 'Copy this command, paste it into Terminal, and press Enter:', command: `launchctl kickstart -k gui/$(id -u)/${label}` },
-        { text: `Reload ${address} in Chrome.` },
+        { text: 'Copy this command, paste it into Terminal, and press Enter:', command: 'focusflow dashboard start' },
+        { text: `Reload this page (or open ${address}).` },
       ],
       fallback: {
-        text: 'If Terminal says it could not find the service, the login item is not installed. Run this instead and leave that Terminal window open:',
+        text: 'If that says the login item is not installed, run this instead and leave that Terminal window open:',
         command: `cd ${dir} && npm start`,
       },
     },
     launcher: {
       file: LAUNCHER_FILE,
-      text: `Easier: open "${LAUNCHER_FILE}" (in your Applications folder). In one click it starts the dashboard if it is not running, then opens it with the token.`,
+      text: `Easier: open "${LAUNCHER_FILE}" (in your Applications folder). It starts Focusflow if it is not running and opens it with its key.`,
       gatekeeper: 'If macOS says it cannot verify the app, right-click it, choose Open, then choose Open again.',
     },
   };
@@ -173,7 +173,7 @@ document.addEventListener('click', function (e) {
 `;
 
 // A whole page that needs nothing from the server (or the network): the user can
-// bookmark it or open it from Finder when Chrome cannot connect.
+// bookmark it or open it from Finder when the browser cannot connect.
 export function renderHelpPage(content, { css = helpCss() } = {}) {
   const l = content.launcher;
   return `<!doctype html>
@@ -187,12 +187,12 @@ export function renderHelpPage(content, { css = helpCss() } = {}) {
 <body>
 <main>
 <h1>${esc(content.app)} Help</h1>
-<p class="muted">This page works even when the dashboard is off. Find your problem below and follow the steps.</p>
+<p class="muted">This page works even when Focusflow is not running. Find your problem below and follow the steps.</p>
 <section class="help-case" id="token">${renderCaseHtml(content.token)}</section>
 <section class="help-case" id="server">${renderCaseHtml(content.server)}</section>
 <p class="help-launcher">${esc(l.text)}</p>
 <p class="muted">${esc(l.gatekeeper)}</p>
-<p><a href="http://${esc(content.address)}/">Open the dashboard</a></p>
+<p><a href="http://${esc(content.address)}/">Open Focusflow</a></p>
 </main>
 <script>${COPY_SCRIPT}</script>
 </body>

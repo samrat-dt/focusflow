@@ -18,11 +18,12 @@ test('the page embeds the recovery steps with this server\'s real folder and por
     const res = await h.get('/', { token: null });
     assert.equal(res.status, 200);
     const help = embedded(res.body);
-    assert.ok(help.html.token.includes(`cd ${ROOT} &amp;&amp; npm run url -- --open`), 'token steps must name the real project folder');
-    assert.ok(help.html.lost.includes('launchctl kickstart -k gui/$(id -u)/local.focusflow.dashboard'));
+    assert.ok(help.html.token.includes('focusflow dashboard open'));
+    assert.ok(help.html.lost.includes('focusflow dashboard start'));
+    assert.ok(help.html.lost.includes(`cd ${ROOT} &amp;&amp; npm start`), 'the fallback names the real project folder');
     assert.ok(help.html.lost.includes(`127.0.0.1:${h.port}`), 'the reload address is the port this server is on');
     assert.match(help.html.lost, /stopped answering/);
-    assert.match(help.html.token, /access token/);
+    assert.match(help.html.token, /access key/);
   } finally { h.close(); }
 });
 

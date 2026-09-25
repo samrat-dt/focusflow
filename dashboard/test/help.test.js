@@ -20,41 +20,40 @@ test('shQuote leaves plain paths alone and single-quotes anything the shell woul
   assert.equal(shQuote('/Users/a/$HOME'), "'/Users/a/$HOME'");
 });
 
-test('the token steps: open Terminal, paste the command into the real project folder, press Enter', () => {
+test('the access-key steps: open Terminal, run focusflow dashboard open, press Enter', () => {
   const c = helpContent({ projectDir: DIR, port: 4177 });
-  assert.match(c.token.heading, /token/i);
+  assert.match(c.token.heading, /access key/i);
   assert.equal(c.token.steps.length, 3);
   assert.match(c.token.steps[0].text, /Terminal/);
-  assert.equal(c.token.steps[1].command, `cd ${DIR} && npm run url -- --open`);
+  assert.equal(c.token.steps[1].command, 'focusflow dashboard open');
   assert.match(c.token.steps[2].text, /remembers/);
 });
 
-test('the server steps: kick the login item, reload the right address, and a fallback for no login item', () => {
+test('the server steps: start it, reload the right address, and a fallback for no login item', () => {
   const c = helpContent({ projectDir: DIR, port: 4200 });
-  assert.match(c.server.heading, /can't connect/);
-  assert.equal(c.server.steps[1].command, `launchctl kickstart -k gui/$(id -u)/${LABEL}`);
+  assert.match(c.server.heading, /not running/);
+  assert.equal(c.server.steps[1].command, 'focusflow dashboard start');
   assert.match(c.server.steps[2].text, /127\.0\.0\.1:4200/);
   assert.equal(c.server.fallback.command, `cd ${DIR} && npm start`);
 });
 
 test('a folder with a space is quoted in every command, and no command hard-codes a path', () => {
   const c = helpContent({ projectDir: '/Users/a/My Code/cc' });
-  assert.equal(c.token.steps[1].command, "cd '/Users/a/My Code/cc' && npm run url -- --open");
+  assert.equal(c.server.fallback.command, "cd '/Users/a/My Code/cc' && npm start");
   const other = helpContent({ projectDir: '/somewhere/else' });
-  assert.ok(commands(other).some(x => x.includes('/somewhere/else')));
+  assert.ok([...commands(other), other.server.fallback.command].some(x => x.includes('/somewhere/else')));
   assert.ok(commands(other).every(x => !x.includes('/Users/')), 'a path from another machine leaked into the commands');
 });
 
 test('with no folder given (README) the commands use a placeholder, unquoted', () => {
   const c = helpContent({});
-  assert.equal(c.token.steps[1].command, `cd ${PROJECT_PLACEHOLDER} && npm run url -- --open`);
   assert.equal(c.server.fallback.command, `cd ${PROJECT_PLACEHOLDER} && npm start`);
 });
 
 test('the launcher is offered as the one-click way, and the Gatekeeper warning is explained', () => {
   const c = helpContent({ projectDir: DIR });
   assert.ok(c.launcher.text.includes(LAUNCHER_FILE));
-  assert.match(c.launcher.text, /one click/);
+  assert.match(c.launcher.text, /starts Focusflow/);
   assert.match(c.launcher.gatekeeper, /right-click/i);
 });
 
@@ -83,7 +82,7 @@ test('the html fragment numbers the steps and gives every command a Copy button 
   assert.match(html, /<ol class="help-steps">/);
   assert.equal((html.match(/<li>/g) || []).length, 3);
   assert.equal((html.match(/class="help-copy"/g) || []).length, 1);
-  assert.ok(html.includes(`data-copy="cd ${DIR} &amp;&amp; npm run url -- --open"`));
+  assert.ok(html.includes('data-copy="focusflow dashboard open"'));
   assert.equal((renderCaseHtml(c.server).match(/class="help-copy"/g) || []).length, 2, 'main command plus the fallback command');
 });
 
@@ -113,7 +112,7 @@ test('the help page is self-contained: inline style and script only, nothing fet
 
 test('the help page says up front that it works without the dashboard, and carries both cases and the launcher', () => {
   const page = renderHelpPage(helpContent({ projectDir: DIR }));
-  assert.match(page, /works even when the dashboard is off/);
+  assert.match(page, /works even when Focusflow is not running/);
   assert.match(page, /id="token"/);
   assert.match(page, /id="server"/);
   assert.ok(page.includes(LAUNCHER_FILE));
@@ -132,11 +131,18 @@ test('the text form (setup output) is plain: numbered steps, indented commands, 
   const t = renderText(helpContent({ projectDir: DIR }));
   assert.ok(!t.includes('```'));
   assert.match(t, /^ {2}1\. Open Terminal/m);
-  assert.match(t, /^ {6}cd \S+ && npm run url -- --open$/m);
+  assert.match(t, /^ {6}focusflow dashboard open$/m);
 });
 
 test('the text form keeps a blank line between the steps, the fallback and the next case', () => {
   const t = renderText(helpContent({ projectDir: DIR }));
-  assert.match(t, /Chrome opens the dashboard and remembers the token\. You will not need to do this again\.\n\nChrome says/);
-  assert.match(t, /Reload 127\.0\.0\.1:4177 in Chrome\.\n\n {2}If Terminal says/);
+  assert.match(t, /Focusflow opens with its key and remembers it\. You will not need to do this again\.\n\nFocusflow is not running/);
+  assert.match(t, /open 127\.0\.0\.1:4177\)\.\n\n {2}If that says/);
+});
+
+test('the recovery wording talks about Focusflow, never a dashboard or a particular browser', () => {
+  const c = helpContent({ projectDir: DIR });
+  const words = [c.token.heading, c.token.what, c.server.heading, c.server.what, c.server.stopped.heading, c.server.stopped.what,
+    ...c.token.steps.map(s => s.text), ...c.server.steps.map(s => s.text), c.launcher.text];
+  for (const w of words) assert.ok(!/dashboard|chrome/i.test(w), `mentions a dashboard or Chrome: ${w}`);
 });

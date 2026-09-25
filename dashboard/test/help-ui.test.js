@@ -62,12 +62,12 @@ test('no token: the full-screen panel shows, says what happened, lists the steps
   const panel = p.els['token-panel'];
   assert.equal(panel.hidden, false);
   const body = p.els['token-panel-body'].innerHTML;
-  assert.match(body, /Chrome forgot the access token/);
-  assert.match(body, /does not have its access token/);
+  assert.match(body, /This window needs its access key/);
+  assert.match(body, /does not have the private key/);
   assert.match(body, /<ol class="help-steps">/);
   assert.equal((body.match(/<li>/g) || []).length, 3);
   assert.match(body, /Open Terminal/);
-  assert.ok(body.includes(`cd ${DIR} &amp;&amp; npm run url -- --open`), 'the command names the real folder');
+  assert.ok(body.includes('focusflow dashboard open'), 'the one command to run');
   assert.match(body, /class="help-copy"/);
   assert.match(body, /Focusflow\.app/, 'the one-click launcher is offered');
 });
@@ -76,7 +76,7 @@ test('a rejected token (401) shows the same panel', async () => {
   const p = page({ fetchImpl: respond(401) });
   await assert.rejects(p.Help.request('/api/tasks', { token: TOKEN }), e => e.code === 'bad-token' && e.helped === true);
   assert.equal(p.els['token-panel'].hidden, false);
-  assert.match(p.els['token-panel-body'].innerHTML, /access token/);
+  assert.match(p.els['token-panel-body'].innerHTML, /access key/);
 });
 
 test('the panel has a "check again" button that hands control back to the app', async () => {
@@ -124,8 +124,8 @@ test('the server not answering: a visible banner with the start-it-again steps',
   const body = p.els['lost-banner-body'].innerHTML;
   assert.match(body, /stopped answering/);
   assert.match(body, /<ol class="help-steps">/);
-  assert.ok(body.includes('launchctl kickstart -k gui/$(id -u)/local.focusflow.dashboard'));
-  assert.match(body, /Reload 127\.0\.0\.1:4177/);
+  assert.ok(body.includes('focusflow dashboard start'));
+  assert.match(body, /open 127\.0\.0\.1:4177/);
   assert.match(body, /class="help-copy"/);
   assert.equal(p.els['token-panel'].hidden, true, 'a dead server is not a token problem');
 });
@@ -167,7 +167,7 @@ test('the request carries the token and passes method, headers and body through'
 test('Copy puts exactly the command on the clipboard and confirms, then reverts', async () => {
   const p = page();
   await assert.rejects(p.Help.request('/a', { token: null }));
-  const cmd = `cd ${DIR} && npm run url -- --open`;
+  const cmd = 'focusflow dashboard open';
   const button = { textContent: 'Copy', getAttribute: k => (k === 'data-copy' ? cmd : null), parentNode: { querySelector: () => ({}) } };
   p.clickCopy(button);
   await new Promise(r => setImmediate(r));

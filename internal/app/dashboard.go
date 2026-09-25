@@ -92,20 +92,20 @@ func cmdDashboard(args []string) int {
 	switch sub {
 	case "status":
 		if dashboardDial("127.0.0.1:" + strconv.Itoa(port)) {
-			fmt.Printf("dashboard: running on http://127.0.0.1:%d/\n", port)
+			fmt.Printf("Focusflow is running on http://127.0.0.1:%d/\n", port)
 			return 0
 		}
-		fmt.Println("dashboard: not running (focusflow dashboard start)")
+		fmt.Println("Focusflow is not running (start it with: focusflow dashboard start)")
 		return 1
 	case "start", "open", "url":
 		tokenBytes, terr := os.ReadFile(filepath.Join(home, "token"))
 		token := strings.TrimSpace(string(tokenBytes))
 		if terr != nil || token == "" {
-			fmt.Fprintf(os.Stderr, "error: the dashboard is not set up yet (no token in %s) — run `make dashboard` in the focusflow repository\n", home)
+			fmt.Fprintf(os.Stderr, "error: the Focusflow app is not set up yet (no access key in %s) — run `make dashboard` in the focusflow repository\n", home)
 			return 1
 		}
 		if sub != "url" && !startDashboard(home, port) {
-			fmt.Fprintln(os.Stderr, "error: the dashboard did not start (is its login item installed? `make dashboard`)")
+			fmt.Fprintln(os.Stderr, "error: Focusflow did not start (is its login item installed? `make dashboard`)")
 			return 1
 		}
 		u := fmt.Sprintf("http://127.0.0.1:%d/#token=%s", port, token)
@@ -114,12 +114,12 @@ func cmdDashboard(args []string) int {
 			fmt.Println(u)
 		case "open":
 			if err := openURL(u); err != nil {
-				fmt.Fprintf(os.Stderr, "error: opening the browser: %v\n", err)
+				fmt.Fprintf(os.Stderr, "error: could not open Focusflow in your browser: %v\n", err)
 				return 1
 			}
-			fmt.Printf("opened the dashboard on http://127.0.0.1:%d/\n", port)
+			fmt.Printf("Opened Focusflow on http://127.0.0.1:%d/\n", port)
 		default:
-			fmt.Printf("dashboard running on http://127.0.0.1:%d/\n", port)
+			fmt.Printf("Focusflow is running on http://127.0.0.1:%d/\n", port)
 		}
 		return 0
 	}
