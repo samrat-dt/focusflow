@@ -24,7 +24,7 @@
   --ink: #202020;
   --ink-2: #4f4e4a;
   --muted: #6c6b66;
-  --faint: #8d8b85; /* large text and icons only */
+  --faint: #6f6d69; /* quietest text; still WCAG AA on every surface */
   /* brand */
   --accent: #1f6b57;
   --accent-hover: #185a49;
@@ -32,14 +32,14 @@
   --accent-ink: #ffffff;
   /* meaning (used as small dots, text and soft fills, never as big blocks) */
   --backlog: #9a978f;
-  --next: #3f6fd1;
+  --next: #3b69c6;
   --progress: #c7851a;
-  --paused: #8b7d6b;
+  --paused: #786c5d;
   --review: #7b56c8;
-  --done: #2d8a5b;
+  --done: #287c51;
   --danger: #c23a2b;
   --danger-soft: #fbece9;
-  --warn: #a4620c;
+  --warn: #9d5e0b;
   --warn-soft: #fbf1e3;
   --info-soft: #eef2fb;
   /* type */
@@ -386,3 +386,7 @@ a:hover { text-decoration: underline; }
 .quick body { background: var(--surface); }
 .quick .main { padding: 0; }
 .quick .toasts { display: none; }
+
+/* keyboard: skip straight to the page */
+.skip { position: fixed; top: 8px; left: 8px; z-index: 200; transform: translateY(-200%); background: var(--ink); color: #fff; border: 0; border-radius: var(--r-sm); padding: 8px 14px; font: 500 var(--t-md) var(--font); }
+.skip:focus { transform: none; }

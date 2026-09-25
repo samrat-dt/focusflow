@@ -307,5 +307,10 @@ claude itself. All background runs now go through `focusflow do --auto`, so they
 snooze, inline reply and memory, clean-run status, quick add with shorthand, editing, memory, drag between stages,
 ⌘K, settings, every page without console errors) plus 400px and mini-window layouts without horizontal overflow.
 
-**Still open:** removing `/classic`; judgement loop (Request changes → house rules); proof of work on reviews;
-worktree per task; click-through notifications from the Mac app; signing and notarising the app.
+**Since then (same day):** judgement loop (Request changes → house rules, schema v5) and proof of work on reviews;
+native notifications with Reply and Approve, a menu-bar item and ⌃⌥N quick capture in the Mac app; per-project
+background-run switch and time limit (schema v6); accessibility pass (every control named on every page, checked in
+e2e; all text colours WCAG AA on every surface; skip link); 16 journeys in `npm run e2e`.
+
+**Still open:** removing `/classic`; worktree per task; signing and notarising the app (needs an Apple Developer ID;
+this Mac has no signing identity, so the app stays ad-hoc signed for local use).

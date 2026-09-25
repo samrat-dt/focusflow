@@ -166,6 +166,26 @@ await step('The quick-capture window adds a task with shorthand', async () => {
   await b.goto(`${BASE}/?q=2#token=${TOKEN}`);
 });
 
+await step('Accessibility: every control on every page has a name a screen reader can announce', async () => {
+  const problems = [];
+  for (const r of ['/home', '/inbox/keys', '/tasks?view=board', '/tasks?view=list', '/task/pricing', '/task/pricing?tab=memory', '/projects', '/project/website', '/project/website?tab=rules', '/memory', '/archive', '/settings', '/about']) {
+    await b.evaluate(`location.hash = '#${r}'; true`);
+    await b.wait(700);
+    const bad = await b.evaluate(`(() => {
+      const name = el => (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim()
+        || (el.id && document.querySelector('label[for="' + el.id + '"]')?.textContent.trim()) || (el.closest('label')?.textContent.trim()) || (el.placeholder || '').trim();
+      const out = [];
+      for (const el of document.querySelectorAll('button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=link], [role=tab]')) {
+        if (el.offsetParent === null) continue;
+        if (!name(el)) out.push(el.outerHTML.slice(0, 90));
+      }
+      return out;
+    })()`);
+    for (const x of bad) problems.push(`${r}: ${x}`);
+  }
+  if (problems.length) throw new Error(problems.slice(0, 6).join(' | '));
+});
+
 await step('Every page renders without errors', async () => {
   for (const r of ['/home', '/inbox', '/inbox/keys', '/tasks?view=list', '/projects', '/project/website?tab=assistant', '/project/website?tab=brief', '/memory', '/archive', '/settings', '/about', '/about/vision', '/help/troubleshooting', '/task/nope']) {
     await b.evaluate(`location.hash = '#${r}'; true`);

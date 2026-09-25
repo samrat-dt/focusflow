@@ -45,7 +45,7 @@ const FOOT = [
 const sidebar = h('nav.sidebar', { 'aria-label': 'Main' });
 const main = h('main.main', { id: 'main', tabindex: '-1' });
 const menuToggle = h('button.btn.icon.menu-toggle', { type: 'button', 'aria-label': 'Menu', on: { click: () => sidebar.classList.toggle('open') } }, icon('menu'));
-document.getElementById('root').append(h('div.app', sidebar, main), menuToggle);
+document.getElementById('root').append(h('button.skip', { type: 'button', on: { click: () => main.focus() } }, 'Skip to content'), h('div.app', sidebar, main), menuToggle);
 
 function navItem(n) {
   const current = (n.match ?? [n.id]).includes(route.name) || (n.id === 'tasks' && route.name === 'task') || (n.id === 'projects' && route.name === 'project');
