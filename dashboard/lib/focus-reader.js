@@ -165,3 +165,21 @@ export function readOwners({ focusRoot = defaultRoot(), dbName = defaultDbName()
     } catch { return []; } // a database from before owners existed
   });
 }
+
+// The message bus since `sinceIso` (newest `limit` rows), plus watch subscriptions and pending nudges.
+// Read-only, for the Activity map.
+export function readBus({ focusRoot = defaultRoot(), dbName = defaultDbName(), sinceIso, limit = 1000, busyTimeoutMs = 3000 }) {
+  return withFocusDb(path.join(focusRoot, dbName), busyTimeoutMs, db => {
+    // Timestamps carry the writer's UTC offset, so compare as instants, with a day's slack in SQL.
+    const since = Date.parse(sinceIso);
+    const slack = new Date(since - 86400000).toISOString().slice(0, 10);
+    const messages = db.prepare(`SELECT id, from_assignee, from_task_slug, to_assignee, to_task_slug, body, urgent, broadcast, mail, created_at, read_at, delivered_at
+      FROM bus_messages WHERE created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(slack, limit)
+      .filter(m => Date.parse(m.created_at) >= since).reverse();
+    let watches = [];
+    let nudges = [];
+    try { watches = db.prepare('SELECT watcher, watched, created_at FROM bus_watches').all(); } catch { /* older database */ }
+    try { nudges = db.prepare('SELECT task_slug, attempts, nudged_at FROM bus_nudges').all(); } catch { /* older database */ }
+    return { messages: messages.map(m => ({ ...m })), watches: watches.map(w => ({ ...w })), nudges: nudges.map(n => ({ ...n })) };
+  });
+}

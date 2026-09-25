@@ -8,7 +8,8 @@ import { signalsFor } from './signals.js';
 import { makeEvent, appendEvent } from './event-log.js';
 import { runFocus } from './focus-run.js';
 import { focusEnv } from './focus-env.js';
-import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
+import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun, readBus as readFocusBus } from './focus-reader.js';
+import { buildActivity } from './activity-map.js';
 import { buildNeeds, buildSince } from './needs.js';
 import { learnedBias, createGate, inQuietHours } from './attention.js';
 import { gitSince, latestSummary } from './proof.js';
@@ -121,6 +122,7 @@ export function createApp({
   focusRunDetached = (args, { env }) => { const c = spawn(config.focusBin, args, { env, detached: true, stdio: 'ignore' }); c.on('error', () => {}); c.unref(); return Promise.resolve(); },
   readWorkDir = ({ slug }) => readFocusWorkDir({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   readSession = ({ slug }) => readFocusSession({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
+  readBus = opts => readFocusBus({ focusRoot: config.focusRoot, dbName: config.focusDbName, ...opts }),
   readRun = ({ slug }) => readFocusRun({ focusRoot: config.focusRoot, dbName: config.focusDbName, slug }),
   activityHome = undefined,
   mirror = null,
@@ -999,6 +1001,18 @@ export function createApp({
       const ts = new URL(req.url, 'http://localhost').searchParams.get('ts') ?? '';
       if (Number.isNaN(Date.parse(ts))) return fail(res, 400, 'ts must be an ISO timestamp');
       return json(res, 200, buildSince({ tasks: store.tasks(), messages: store.messages(config.device), since: new Date(ts).toISOString() }));
+    }
+    if (pathname === '/api/activity') {
+      if (!need('GET')) return;
+      const since = new URL(req.url, 'http://localhost').searchParams.get('since') ?? '7d';
+      const days = { '1d': 1, '7d': 7, '30d': 30 }[since];
+      if (!days) return fail(res, 400, 'since must be 1d, 7d or 30d');
+      const sinceIso = new Date(now().getTime() - days * 86400000).toISOString();
+      let bus;
+      try { bus = readBus({ sinceIso }); } catch (err) { return fail(res, 502, `cannot read the message bus: ${err.message}`); }
+      let projects = [];
+      try { projects = readProjectsFull(); } catch { /* names fall back to slugs */ }
+      return json(res, 200, { since, ...buildActivity({ ...bus, tasks: store.tasks().map(view), projects, now: now() }) });
     }
     if (pathname === '/api/settings') {
       if (req.method === 'GET') {

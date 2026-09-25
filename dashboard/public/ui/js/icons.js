@@ -48,6 +48,7 @@ const P = {
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   zap: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
+  network: '<circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6.7 7.2 10 10.3M17.3 7.2 14 10.3M7.5 17.6l2.8-3.8M16.5 16.6l-2.7-3"/>',
   logo: '<path d="M6 17c3-7 9-7 12-10"/><path d="M6 12c2-3 4-4 7-5"/><circle cx="18" cy="7" r="1.6" fill="currentColor"/>',
 };
 

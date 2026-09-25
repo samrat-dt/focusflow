@@ -4,7 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export async function launch({ port = 9333, width = 1400, height = 900 } = {}) {
+import net from 'node:net';
+
+const freePort = () => new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+
+export async function launch({ port, width = 1400, height = 900 } = {}) {
+  port = port ?? await freePort(); // never collide with a Chrome left over from an earlier run
   const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'));
   const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
     '--headless=new', '--disable-gpu', '--no-first-run', `--user-data-dir=${prof}`, `--remote-debugging-port=${port}`, `--window-size=${width},${height}`, 'about:blank',
@@ -14,6 +19,7 @@ export async function launch({ port = 9333, width = 1400, height = 900 } = {}) {
     await new Promise(r => setTimeout(r, 200));
     try { info = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { /* not yet */ }
   }
+  if (!info) { chrome.kill('SIGKILL'); throw new Error(`Chrome did not start its debugging port (${port})`); }
   const page = info.find(t => t.type === 'page');
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise(r => ws.addEventListener('open', r));

@@ -32,6 +32,7 @@ const mini = document.documentElement.classList.contains('mini');
 const NAV = [
   { id: 'home', label: 'Home', icon: 'home', path: '/home', count: () => S.needs.total || null, key: 'g h' },
   { id: 'inbox', label: 'Inbox', icon: 'inbox', path: '/inbox', count: () => S.inbox.unread_total || null, key: 'g i' },
+  { id: 'activity', label: 'Activity', icon: 'network', path: '/activity', key: 'g a' },
   { id: 'tasks', label: 'Tasks', icon: 'tasks', path: '/tasks', key: 'g t' },
   { id: 'projects', label: 'Projects', icon: 'folder', path: '/projects', key: 'g p' },
   { id: 'memory', label: 'Memory', icon: 'memory', path: '/memory', key: 'g m' },
@@ -228,7 +229,7 @@ document.addEventListener('keydown', e => {
   if (document.querySelector('.overlay') || isEditing(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (chord === 'g') {
     chord = null;
-    const to = { h: '/home', i: '/inbox', t: '/tasks', p: '/projects', m: '/memory', s: '/settings', a: '/about' }[e.key];
+    const to = { h: '/home', i: '/inbox', a: '/activity', t: '/tasks', p: '/projects', m: '/memory', s: '/settings' }[e.key];
     if (to) { e.preventDefault(); go(to); }
     return;
   }

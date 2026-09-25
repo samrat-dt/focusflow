@@ -31,7 +31,7 @@ const DEFAULT_TASKS = () => [
 // answer to any call that is not an inbox listing; the default answers
 // `focusflow message` with a new id and everything else with empty output.
 // `sessions`: map slug -> { sessionId, harness } | undefined, backs the `readSession` DI seam.
-export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder, runs = {} } = {}) {
+export async function makeApp({ tasks, live = ['running'], focusflow, workDir = '/work/x', notifier, tunables, sessions = {}, activityHome, projectsFull = [], owners = [], detachedCalls, pickFolder, runs = {}, bus = { messages: [], watches: [], nudges: [] } } = {}) {
   const calls = [];
   const inboxRows = { rows: [], fail: null };
   const list = tasks ?? DEFAULT_TASKS();
@@ -60,6 +60,7 @@ export async function makeApp({ tasks, live = ['running'], focusflow, workDir = 
     readWorkDir: () => workDir,
     readSession: ({ slug }) => sessions[slug] ?? null,
     readRun: ({ slug }) => runs[slug] ?? null,
+    readBus: () => bus,
     readProjects: () => [],
     readProjectsFull: () => projectsFull,
     readOwners: () => owners,

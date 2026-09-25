@@ -229,6 +229,10 @@ Press **⌃⌥N** anywhere to capture a task without switching apps.
 Everything that needs you, ranked, with the reason: questions, work ready for review, stopped or stuck runs, overdue
 tasks and things you're waiting on. Nothing there? You're all caught up.
 
+## Agents talk to each other too
+Besides talking to you, tasks can message each other, project assistants hand work to subtasks, and a task can
+broadcast to everyone watching it. **Activity** shows all of it as a live map. See **Activity: who talks to whom**.
+
 ## Memory
 What you tell tasks (answers and instructions) is remembered automatically and handed to later sessions. Manage it in
 **Memory** or on a task's **Memory** tab.
@@ -282,6 +286,36 @@ They come from **Request changes** at review, or add them on a project's **House
 - **Forget** anything that's wrong or outdated. Forgotten memories stop being used immediately.
 
 From the command line: \`focusflow remember "…"\`, \`focusflow memories\`, \`focusflow forget <id>\`.
+` },
+  { id: 'activity', group: 'Guides', title: 'Activity: who talks to whom', body: `# Activity: who talks to whom
+
+<p class="stamp">Updated ${UPDATED}</p>
+
+Your agents don't only talk to you. They also talk to **each other**:
+
+- **A task can message another task.** For example, one task tells another "final prices are in PRICES.md, use them",
+  or reports "done" to its project assistant.
+- **Project assistants hand work to subtasks**, and subtasks report back to them.
+- **Broadcasts.** A task can announce something ("pricing table shipped") to everyone watching it.
+- **Watching.** A task (or you) can watch another task, and hears about its broadcasts.
+
+**Activity** (in the sidebar, or press G then A) shows all of it as a live map: you in the middle, each project's
+agents clustered around you, and the project assistant at the centre of its cluster.
+
+| On the map | Means |
+|---|---|
+| Grey line | A conversation between you and an agent |
+| Green line | Agents talking to each other |
+| Dotted purple line | A broadcast |
+| Dashed blue line | One side is watching the other |
+| Thicker line | More messages |
+| Moving dot | They talked in the last 10 minutes |
+| Pulsing ring | That agent is working right now |
+| Red number | Messages to you that you haven't read |
+
+Click anyone to see only their conversations in the feed; double-click to open the task. Click a line to see
+the messages along it. The feed can also show only agent-to-agent traffic, only yours, or only broadcasts, for today,
+7 days or 30 days.
 ` },
   { id: 'focus', group: 'Guides', title: 'Stay focused', body: `# Stay focused
 
@@ -349,6 +383,7 @@ change.
 | G then H | Home |
 | G then I | Inbox |
 | G then T | Tasks |
+| G then A | Activity |
 | G then P | Projects |
 | G then M | Memory |
 | G then S | Settings |
@@ -450,6 +485,9 @@ have a few seconds to Undo.
   { id: 'whats-new', group: 'Reference', title: 'What’s new', body: `# What's new
 
 <p class="stamp">Updated ${UPDATED}</p>
+
+### 26 September 2026
+- **Activity**: a live map of who talks to whom (you, your agents, and agents with each other), with a filterable feed.
 
 ### 25 September 2026 (night)
 - Per-project control of background runs: turn them off, or set a time limit per run.

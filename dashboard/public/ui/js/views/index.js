@@ -8,5 +8,6 @@ import { archive } from './archive.js';
 import { settings } from './settings.js';
 import { about, help } from './about.js';
 import { quick } from './quick.js';
+import { activity } from './activity.js';
 
-export const VIEWS = { home, tasks, task, projects, project, inbox, memory, archive, settings, about, help, quick };
+export const VIEWS = { home, tasks, task, projects, project, inbox, memory, archive, settings, about, help, quick, activity };

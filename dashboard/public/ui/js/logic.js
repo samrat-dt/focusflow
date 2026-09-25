@@ -208,3 +208,50 @@ export function inlineTokens(s) {
   if (last < s.length) out.push({ t: 'text', v: s.slice(last) });
   return out;
 }
+
+// ---- Activity map layout: deterministic, so nothing jumps between refreshes ----
+// You in the centre; one cluster per project on a ring around you; a project's assistant at the centre of
+// its cluster, its tasks around it. Returns positions and cluster labels in a width×height box.
+export function layoutActivity(nodes, { width = 1000, height = 620 } = {}) {
+  const cx = width / 2;
+  const cy = height / 2;
+  const pos = new Map();
+  const labels = [];
+  pos.set('you', { x: cx, y: cy });
+  const groups = new Map();
+  for (const n of nodes) {
+    if (n.id === 'you') continue;
+    const key = n.kind === 'person' ? '@people' : n.project ?? '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(n);
+  }
+  const keys = [...groups.keys()].sort((a, b) => groups.get(b).length - groups.get(a).length || a.localeCompare(b));
+  const rx = Math.min(width * 0.36, 360);
+  const ry = Math.min(height * 0.34, 215);
+  // Start so that two clusters sit left and right of you (wide screens), three form a triangle, etc.
+  const start = keys.length === 2 ? 0 : -Math.PI / 2;
+  keys.forEach((key, i) => {
+    const angle = start + (2 * Math.PI * i) / Math.max(1, keys.length);
+    const gx = keys.length === 1 ? cx + rx * 0.62 : cx + rx * Math.cos(angle);
+    const gy = keys.length === 1 ? cy : cy + ry * Math.sin(angle);
+    const members = [...groups.get(key)].sort((a, b) => (a.kind === 'assistant' ? -1 : b.kind === 'assistant' ? 1 : a.id.localeCompare(b.id)));
+    const hub = members[0]?.kind === 'assistant' ? members.shift() : null;
+    if (hub) pos.set(hub.id, { x: gx, y: gy });
+    const r = members.length <= 1 && !hub ? 0 : Math.min(95, 44 + members.length * 9);
+    members.forEach((m, j) => {
+      const a = -Math.PI / 2 + (2 * Math.PI * j) / Math.max(1, members.length);
+      pos.set(m.id, { x: gx + r * Math.cos(a), y: gy + r * Math.sin(a) });
+    });
+    labels.push({ key, x: gx, y: Math.max(16, gy - r - (hub ? 34 : 30)) });
+  });
+  return { pos, labels };
+}
+
+// A curve from a to b that bows sideways, so two-way and parallel lines stay apart.
+export function curvePath(a, b, bend = 0.16) {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${(mx - dy * bend).toFixed(1)},${(my + dx * bend).toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+}

@@ -59,6 +59,18 @@ test('dropAction maps every board move, and refuses to move a project assistant'
   assert.match(L.dropAction({ status: 'next', kind: 'project_agent' }, 'paused').hint, /assistant/);
 });
 
+test('layoutActivity puts you in the middle, clusters projects, and the assistant at its cluster centre', () => {
+  const nodes = [{ id: 'you', kind: 'you' }, { id: 'wa', kind: 'assistant', project: 'web' }, { id: 'a', kind: 'task', project: 'web' }, { id: 'b', kind: 'task', project: 'web' }, { id: 'o', kind: 'task', project: 'ops' }];
+  const { pos, labels } = L.layoutActivity(nodes, { width: 1000, height: 600 });
+  assert.deepEqual(pos.get('you'), { x: 500, y: 300 });
+  const wa = pos.get('wa');
+  for (const id of ['a', 'b']) { const p = pos.get(id); assert.ok(Math.hypot(p.x - wa.x, p.y - wa.y) > 40, `${id} sits around its assistant`); }
+  assert.equal(labels.length, 2);
+  assert.deepEqual(L.layoutActivity(nodes, { width: 1000, height: 600 }).pos.get('a'), pos.get('a'), 'deterministic');
+  for (const [, p] of pos) assert.ok(p.x > 0 && p.x < 1000 && p.y > 0 && p.y < 600, 'inside the box');
+  assert.match(L.curvePath({ x: 0, y: 0 }, { x: 100, y: 0 }), /^M0\.0,0\.0 Q50\.0,16\.0 100\.0,0\.0$/);
+});
+
 test('groupTasks orders stages and puts no-project last', () => {
   const list = [{ slug: 'a', status: 'done', project: 'x', priority: 'low' }, { slug: 'b', status: 'next', project: null, priority: 'high' }, { slug: 'c', status: 'next', project: 'a', priority: 'low' }];
   assert.deepEqual(L.groupTasks(list, 'stage').map(g => g.key), ['next', 'done']);

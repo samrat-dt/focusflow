@@ -42,6 +42,11 @@ ff('review', 'faq');
 ff('update', 'task', 'backups', '--status', 'in-progress', '--due-date', '2026-09-01');
 execFileSync(env.FOCUSFLOW_BIN, ['message', 'user', 'Should the pricing table show annual or monthly first?'], { cwd: dirs.work, env: { ...env, FOCUSFLOW_TASK: 'pricing' } });
 execFileSync(env.FOCUSFLOW_BIN, ['message', 'user', 'Blocked: need the new vault token.', '--urgent'], { cwd: dirs.work, env: { ...env, FOCUSFLOW_TASK: 'keys' } });
+// Agents talking to each other: launch watches pricing; pricing tells launch directly, then broadcasts.
+const asTask = (slug, ...args) => execFileSync(env.FOCUSFLOW_BIN, args, { cwd: dirs.work, env: { ...env, FOCUSFLOW_TASK: slug } });
+asTask('launch', 'watch', 'pricing');
+asTask('pricing', 'message', 'user/launch', 'Final prices are in PRICES.md, use them in the launch note');
+asTask('pricing', 'broadcast', 'Pricing table shipped');
 
 // The dashboard's own config, pointed at this sandbox's port with banners off.
 execFileSync(process.execPath, ['--no-warnings', '-e', "import('./lib/config.js').then(m => m.loadConfig())"], { cwd: dashboard, env });
@@ -59,7 +64,10 @@ const TOKEN = fs.readFileSync(path.join(env.FOCUSFLOW_DASHBOARD_HOME, 'token'), 
 
 let failed = true;
 try {
-  const { results, errors } = await journeys({ BASE, TOKEN, shots: process.env.E2E_SHOTS });
+  let outcome;
+  try { outcome = await journeys({ BASE, TOKEN, shots: process.env.E2E_SHOTS }); }
+  catch (err) { outcome = { results: [`FAIL the run itself crashed: ${err.stack ?? err}`], errors: [] }; }
+  const { results, errors } = outcome;
   console.log(results.join('\n'));
   if (errors.length) console.log(`console errors:\n${errors.join('\n')}`);
   failed = results.some(r => r.startsWith('FAIL')) || errors.length > 0;

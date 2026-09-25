@@ -166,9 +166,28 @@ await step('The quick-capture window adds a task with shorthand', async () => {
   await b.goto(`${BASE}/?q=2#token=${TOKEN}`);
 });
 
+await step('Activity map shows agents talking to each other, and a click narrows the feed', async () => {
+  await b.evaluate(`location.hash = '#/activity'; true`);
+  await b.until(`document.querySelectorAll('.amap-node').length >= 3`);
+  const edges = await b.evaluate(`[...document.querySelectorAll('.amap-edge')].map(g => g.getAttribute('aria-label'))`);
+  if (!edges.some(l => l.startsWith('Agent to agent: Fix pricing table to Draft the launch'))) throw new Error(JSON.stringify(edges));
+  if (!edges.some(l => l.startsWith('Watching: Draft the launch'))) throw new Error('the watcher should show by name: ' + JSON.stringify(edges));
+  if (!edges.some(l => l.startsWith('Broadcast:'))) throw new Error('no broadcast line');
+  if (!edges.some(l => l.startsWith('Watching:'))) throw new Error('no watch line');
+  await b.evaluate(`[...document.querySelectorAll('.amap-node')].find(g => g.getAttribute('aria-label').startsWith('Draft the launch')).dispatchEvent(new MouseEvent('click', { bubbles: true })); true`);
+  await b.until(`document.body.textContent.includes('Show everyone')`);
+  const rows = await b.evaluate(`[...document.querySelectorAll('.amap-feed .item')].map(r => r.textContent)`);
+  if (!rows.length || rows.some(t => !t.includes('Draft the launch'))) throw new Error(JSON.stringify(rows));
+  if (shots) {
+    await b.evaluate(`location.hash = '#/activity?show=all'; true`); await b.wait(600);
+    await b.evaluate(`document.querySelector('.amap-feed button')?.textContent.includes('Show everyone') && document.querySelector('.amap-feed button').click(); true`); await b.wait(600);
+    await b.shot(`${shots}/activity.png`);
+  }
+});
+
 await step('Accessibility: every control on every page has a name a screen reader can announce', async () => {
   const problems = [];
-  for (const r of ['/home', '/inbox/keys', '/tasks?view=board', '/tasks?view=list', '/task/pricing', '/task/pricing?tab=memory', '/projects', '/project/website', '/project/website?tab=rules', '/memory', '/archive', '/settings', '/about']) {
+  for (const r of ['/home', '/activity', '/inbox/keys', '/tasks?view=board', '/tasks?view=list', '/task/pricing', '/task/pricing?tab=memory', '/projects', '/project/website', '/project/website?tab=rules', '/memory', '/archive', '/settings', '/about']) {
     await b.evaluate(`location.hash = '#${r}'; true`);
     await b.wait(700);
     const bad = await b.evaluate(`(() => {
