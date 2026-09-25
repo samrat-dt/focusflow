@@ -165,7 +165,7 @@ is how that person works.
 ## Exploring (2027)
 - **Plans, not just tasks.** Describe an outcome; the project assistant drafts a plan of tasks, runs them in the right
   order, and brings you only the decisions.
-- **Approve from anywhere.** A phone companion and actionable notifications: Approve or Reply from the banner.
+- **Approve from anywhere.** A phone companion, so the banners you can already act on at your desk follow you.
 - **Any agent.** The same memory and attention for every coding agent you use, not only Claude.
 - **Weekly review, written for you.** What shipped, what stalled, what you decided, what changed in your rules.
 - **Teams.** Shared projects where house rules become team standards, and one Home for the whole team.
@@ -219,6 +219,11 @@ permanent Claude session for the whole project: ask it anything that isn't one t
 Messaging a task that isn't open in a terminal starts a **background run**: Claude works unattended in the project
 folder. **Open in terminal** shows the same session in your terminal app so you can watch or type. Both are the same
 Claude session; you choose how to look at it.
+
+## On your Mac
+The Focusflow app adds a **menu-bar item** showing how many things need you, a **Dock badge**, and **notifications**
+you can act on: **Reply** to a question right from the banner, **Approve** finished work, or click to open the task.
+Press **⌃⌥N** anywhere to capture a task without switching apps.
 
 ## Home
 Everything that needs you, ranked, with the reason: questions, work ready for review, stopped or stuck runs, overdue
@@ -335,6 +340,7 @@ change.
 
 | Keys | Does |
 |---|---|
+| ⌃⌥N (anywhere on your Mac) | Quick capture: add a task without leaving what you're doing |
 | ⌘K or / | Search and jump anywhere, run any command |
 | N | New task |
 | G then H | Home |
@@ -393,8 +399,12 @@ Check Settings → Terminal app (iTerm2 or Terminal). macOS may ask once for per
 System Settings → Privacy & Security → Automation.
 
 ### No notifications
-Settings → Notifications must be on, and it may be quiet hours. macOS must also allow notifications from Script Editor
-(which delivers them) in System Settings → Notifications.
+Settings → Notifications must be on, and it may be quiet hours (only urgent questions come through then). macOS must
+allow notifications from **Focusflow** in System Settings → Notifications. When the Focusflow app isn't running,
+notifications come from Script Editor instead, and have no Reply or Approve buttons.
+
+### The ⌃⌥N shortcut does nothing
+The Focusflow app must be running (it lives in the menu bar too). Another app may already use the same shortcut.
 
 ### The Dock badge is wrong
 It updates every 15 seconds. Refresh (Settings → Status → Refresh) or relaunch the app.
@@ -437,6 +447,11 @@ have a few seconds to Undo.
   { id: 'whats-new', group: 'Reference', title: 'What’s new', body: `# What's new
 
 <p class="stamp">Updated ${UPDATED}</p>
+
+### 25 September 2026 (evening)
+- Notifications from the Focusflow app: click to open, **Reply** inline, **Approve** from the banner.
+- A menu-bar item with everything that needs you.
+- **⌃⌥N** quick capture from anywhere on your Mac.
 
 ### 25 September 2026 (later)
 - **Request changes** and **house rules**: review feedback becomes a standard every future session follows.
