@@ -77,3 +77,28 @@ test('gitSince lists commits and changed files in a real repository, and nothing
   assert.equal(await gitSince({ workDir: tmpdir('ff-nogit-'), since: null }), null);
   assert.deepEqual(latestSummary([{ direction: 'out', body: 'go' }]), null);
 });
+
+test('reply picks the route itself: background when nothing is open, the terminal when it is', async () => {
+  h = await makeApp({ live: ['open'], tasks: [T('quiet', 'in-progress'), T('open', 'in-progress')], focusflow: fakeFocus() });
+  assert.equal((await h.post('/api/tasks/quiet/reply', { text: 'Go ahead' })).json().mode, 'headless');
+  assert.equal((await h.post('/api/tasks/open/reply', { text: 'Go ahead' })).json().mode, 'queue');
+  assert.equal((await h.post('/api/tasks/open/reply', { text: '' })).status, 400);
+});
+
+test('while the Mac app is polling, the server does not send its own banners', async () => {
+  const sent = [];
+  const list = [T('bg', 'in-progress', { auto_run_status: 'running' })];
+  h = await makeApp({ live: [], tasks: list, notifier: { notify: a => sent.push(a), status: () => ({}) } });
+  const n = await h.get('/api/needs-you', { });
+  assert.equal(typeof n.json().notify.enabled, 'boolean');
+  // the app announces itself
+  await new Promise((resolve, reject) => {
+    import('node:http').then(({ default: http }) => {
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/api/needs-you', headers: { host: `127.0.0.1:${h.port}`, 'x-focusflow-token': 'c'.repeat(64), 'x-focusflow-client': 'mac-app' } }, res => { res.resume(); res.on('end', resolve); });
+      r.on('error', reject); r.end();
+    });
+  });
+  list[0].auto_run_status = 'finished';
+  h.app.refresh();
+  assert.equal(sent.length, 0, 'the app shows it natively instead');
+});

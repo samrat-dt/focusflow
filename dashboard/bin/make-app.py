@@ -109,7 +109,7 @@ def build_native(dest):
     """Compile the Swift app (window + always-on-top mini board). Returns True on success."""
     if not os.path.exists(SWIFT_SRC) or shutil.which("swiftc") is None:
         return False
-    r = subprocess.run(["swiftc", "-O", "-framework", "Cocoa", "-framework", "WebKit", SWIFT_SRC, "-o", dest],
+    r = subprocess.run(["swiftc", "-O", "-framework", "Cocoa", "-framework", "WebKit", "-framework", "UserNotifications", "-framework", "Carbon", SWIFT_SRC, "-o", dest],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print("swiftc failed; falling back to the shell launcher:\n" + r.stderr[-800:])

@@ -381,3 +381,8 @@ a:hover { text-decoration: underline; }
   .attn-actions { width: 100%; }
   .msg { max-width: 92%; }
 }
+
+/* quick capture window */
+.quick body { background: var(--surface); }
+.quick .main { padding: 0; }
+.quick .toasts { display: none; }

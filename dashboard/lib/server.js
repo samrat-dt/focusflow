@@ -10,7 +10,7 @@ import { runFocus } from './focus-run.js';
 import { focusEnv } from './focus-env.js';
 import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
 import { buildNeeds, buildSince } from './needs.js';
-import { learnedBias, createGate } from './attention.js';
+import { learnedBias, createGate, inQuietHours } from './attention.js';
 import { gitSince, latestSummary } from './proof.js';
 import { taskEditArgs, projectEditArgs, writeBrief, writeNote, validateSettings, saveSettings, SETTINGS, EditError } from './editing.js';
 import { lastActivity } from './activity.js';
@@ -134,7 +134,11 @@ export function createApp({
   const rawNotifier = injectedNotifier ?? createNotifier({ enabled: true });
   // Urgent news always gets through; everything else waits out quiet hours and arrives as one summary.
   const gate = createGate({ notify: a => { if (injectedNotifier || config.tunables.notifications !== false) rawNotifier.notify(a); }, quietHours: () => (config.tunables.quiet_hours === undefined ? '22:00-08:00' : config.tunables.quiet_hours), now });
-  const notifier = { notify: a => gate.notify(a), status: () => rawNotifier.status() };
+  // While Focusflow.app is running it shows native, clickable notifications itself (it says so on every
+  // poll), so the server's own banners stand down to avoid showing everything twice.
+  let appSeenAt = 0;
+  const appActive = () => now().getTime() - appSeenAt < 45000;
+  const notifier = { notify: a => { if (!appActive()) gate.notify(a); }, status: () => rawNotifier.status() };
   const status = { lastTickAt: null, lastError: null, mirrorError: null, live: new Set(), working: new Set(), malformed, runStates: null };
 
   // Idle vs working, for the (small) currently-live set only, claude harness only (the transcript
@@ -467,6 +471,14 @@ export function createApp({
     refresh();
     if (error !== null) throw new HttpError(502, error);
     return { ok: true, mode: 'headless' };
+  }
+
+  // A reply from anywhere (a notification, the menu bar): it goes to the open terminal session if there is
+  // one, otherwise the task gets back to work in the background.
+  async function reply(slug, body) {
+    const t = store.getTask(slug);
+    const background = !status.live.has(slug) && (!t.has_session || t.harness === 'claude');
+    return sendMessage(slug, background ? { text: body.text, mode: 'headless', confirm: true } : { text: body.text, mode: 'queue' });
   }
 
   // ---- review: proof of work, and "request changes" (the judgement loop) ----
@@ -914,7 +926,9 @@ export function createApp({
     }
     if (pathname === '/api/needs-you') {
       if (!need('GET')) return;
-      return json(res, 200, needsYou());
+      if (req.headers['x-focusflow-client'] === 'mac-app') appSeenAt = now().getTime();
+      const quietSpec = config.tunables.quiet_hours === undefined ? '22:00-08:00' : config.tunables.quiet_hours;
+      return json(res, 200, { ...needsYou(), notify: { enabled: config.tunables.notifications !== false, quiet: inQuietHours(now(), quietSpec) } });
     }
     if (pathname === '/api/memories') {
       if (!need('GET')) return;
@@ -1019,7 +1033,7 @@ export function createApp({
         return fail(res, 502, err.message);
       }
     }
-    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run|proof|request-changes)$/.exec(pathname);
+    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run|proof|request-changes|reply)$/.exec(pathname);
     if (tm) {
       let slug;
       try { slug = decodeURIComponent(tm[1]); } catch { return fail(res, 400, 'bad slug'); }
@@ -1040,6 +1054,7 @@ export function createApp({
       if (!need('POST')) return;
       const body = await readJson(req);
       if (tm[2] === 'request-changes') return json(res, 200, await serial(() => requestChanges(slug, body)));
+      if (tm[2] === 'reply') return json(res, 200, await serial(() => reply(slug, body)));
       if (tm[2] === 'message') return json(res, 200, await serial(() => sendMessage(slug, body)));
       if (tm[2] === 'action') return json(res, 200, await serial(() => taskAction(slug, body)));
       return json(res, 200, await markRead(slug));

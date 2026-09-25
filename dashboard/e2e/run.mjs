@@ -3,6 +3,7 @@
 // Usage: npm run e2e   (needs Go and Google Chrome; macOS)
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,8 @@ const repo = path.resolve(dashboard, '..');
 const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-e2e-'));
 const dirs = Object.fromEntries(['bin', 'home', 'root', 'work'].map(d => [d, path.join(sb, d)]));
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
-const port = 4190 + Math.floor(Math.random() * 50);
+// A port the OS says is free right now.
+const port = await new Promise(resolve => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); }); });
 
 const env = { ...process.env, PATH: `${dirs.bin}:${process.env.PATH}`, HOME: dirs.home, FOCUSFLOW_ROOT: dirs.root,
   FOCUSFLOW_DASHBOARD_HOME: path.join(dirs.root, 'dashboard'), FOCUSFLOW_BIN: path.join(dirs.bin, 'focusflow'), CLAUDE_BIN: path.join(dirs.bin, 'claude') };
@@ -47,7 +49,10 @@ const instFile = path.join(env.FOCUSFLOW_DASHBOARD_HOME, 'instance.json');
 const inst = JSON.parse(fs.readFileSync(instFile, 'utf8'));
 inst.tunables = { ...inst.tunables, port, notifications: false };
 fs.writeFileSync(instFile, JSON.stringify(inst));
-const server = spawn(process.execPath, ['--no-warnings', 'server.js'], { cwd: dashboard, env, stdio: 'ignore' });
+const serverLog = fs.openSync(path.join(sb, 'server.log'), 'w');
+const server = spawn(process.execPath, ['--no-warnings', 'server.js'], { cwd: dashboard, env, stdio: ['ignore', serverLog, serverLog] });
+let serverExit = null;
+server.on('exit', (code, sig) => { serverExit = `server exited (code ${code}, signal ${sig})`; });
 const BASE = `http://127.0.0.1:${port}`;
 for (let i = 0; i < 50; i++) { try { await fetch(BASE); break; } catch { await new Promise(r => setTimeout(r, 200)); } }
 const TOKEN = fs.readFileSync(path.join(env.FOCUSFLOW_DASHBOARD_HOME, 'token'), 'utf8').trim();
@@ -58,6 +63,10 @@ try {
   console.log(results.join('\n'));
   if (errors.length) console.log(`console errors:\n${errors.join('\n')}`);
   failed = results.some(r => r.startsWith('FAIL')) || errors.length > 0;
+  if (failed) {
+    if (serverExit) console.log(serverExit);
+    console.log('--- server log (tail) ---\n' + fs.readFileSync(path.join(sb, 'server.log'), 'utf8').split('\n').slice(-25).join('\n'));
+  }
 } finally {
   server.kill();
   fs.rmSync(sb, { recursive: true, force: true });

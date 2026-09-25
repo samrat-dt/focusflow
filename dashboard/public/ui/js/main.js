@@ -23,6 +23,7 @@ import { VIEWS } from './views/index.js';
   }
   try { if (sessionStorage.getItem('focusflow-mini') === '1') document.documentElement.classList.add('mini'); } catch { /* optional */ }
   reparse();
+  if (location.hash.startsWith('#/quick')) document.documentElement.classList.add('quick', 'mini');
 })();
 
 const mini = document.documentElement.classList.contains('mini');

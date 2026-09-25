@@ -3,6 +3,8 @@
 // makes sure its server (the launchd job local.focusflow.dashboard) is running, and adds the floating window.
 import Cocoa
 import WebKit
+import UserNotifications
+import Carbon.HIToolbox
 
 let label = "local.focusflow.dashboard"
 let home = FileManager.default.homeDirectoryForCurrentUser
@@ -20,23 +22,49 @@ func readToken() -> String {
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 }
 
-// How many things are waiting on the user (review + questions + failed runs), from the local dashboard.
-// nil when the server does not answer; the Dock badge then keeps what it had.
-func needsBadge(_ port: Int) -> Int? {
+// One item that needs the user, as /api/needs-you reports it.
+struct Need { let key: String; let fp: String; let kind: String; let slug: String; let name: String; let detail: String; let urgent: Bool; let project: String }
+struct NeedsSnapshot { let badge: Int; let total: Int; let items: [Need]; let notifyEnabled: Bool; let quiet: Bool }
+
+// What needs the user right now. nil when the server does not answer (everything keeps what it had).
+// The header tells the server this app shows notifications itself, so it does not send its own.
+func fetchNeeds(_ port: Int) -> NeedsSnapshot? {
     guard let url = URL(string: "http://127.0.0.1:\(port)/api/needs-you") else { return nil }
     var req = URLRequest(url: url, timeoutInterval: 3)
     req.setValue(readToken(), forHTTPHeaderField: "x-focusflow-token")
+    req.setValue("mac-app", forHTTPHeaderField: "x-focusflow-client")
     let sem = DispatchSemaphore(value: 0)
-    var result: Int?
+    var result: NeedsSnapshot?
     URLSession.shared.dataTask(with: req) { data, resp, _ in
         defer { sem.signal() }
         guard (resp as? HTTPURLResponse)?.statusCode == 200, let data = data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        result = json["badge"] as? Int
+        let items = (json["items"] as? [[String: Any]] ?? []).map { i in
+            Need(key: i["key"] as? String ?? "", fp: i["fp"] as? String ?? "", kind: i["kind"] as? String ?? "",
+                 slug: i["slug"] as? String ?? "", name: i["name"] as? String ?? "", detail: i["detail"] as? String ?? "",
+                 urgent: i["urgent"] as? Bool ?? false, project: i["project"] as? String ?? "")
+        }
+        let notify = json["notify"] as? [String: Any] ?? [:]
+        result = NeedsSnapshot(badge: json["badge"] as? Int ?? 0, total: json["total"] as? Int ?? items.count, items: items,
+                               notifyEnabled: notify["enabled"] as? Bool ?? true, quiet: notify["quiet"] as? Bool ?? false)
     }.resume()
     _ = sem.wait(timeout: .now() + 4)
     return result
 }
+
+// Fire-and-forget POST to the local server (notification actions).
+func postJSON(_ path: String, _ body: [String: Any]) {
+    guard let url = URL(string: "http://127.0.0.1:\(readPort())\(path)"), let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+    var req = URLRequest(url: url, timeoutInterval: 30)
+    req.httpMethod = "POST"
+    req.httpBody = data
+    req.setValue("application/json", forHTTPHeaderField: "content-type")
+    req.setValue(readToken(), forHTTPHeaderField: "x-focusflow-token")
+    URLSession.shared.dataTask(with: req).resume()
+}
+
+let kindLabel = ["question": "Question for you", "review": "Ready for your review", "failed": "A background run stopped",
+                 "stalled": "Might be stuck", "overdue": "Overdue", "waiting": "Waiting on someone"]
 
 func serverUp(_ port: Int) -> Bool {
     let sock = socket(AF_INET, SOCK_STREAM, 0)
@@ -81,24 +109,33 @@ func ensureServer(_ port: Int) -> Bool {
     return serverUp(port)
 }
 
-final class Board: NSObject, WKNavigationDelegate {
+final class Board: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let web: WKWebView
     let mini: Bool
+    let route: String
     var retry: Timer?
+    var onClose: (() -> Void)?
 
-    init(mini: Bool) {
+    init(mini: Bool, route: String = "%2Fhome") {
         self.mini = mini
+        self.route = route
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = WKWebsiteDataStore.default()
         web = WKWebView(frame: .zero, configuration: cfg)
         super.init()
+        cfg.userContentController.add(self, name: "focusflow")
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
     }
 
+    // The page asks to close its window (the quick-capture window, after adding a task or on Esc).
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+        if (message.body as? String) == "close" { onClose?() }
+    }
+
     func url() -> URL {
         let port = readPort()
-        let frag = "token=\(readToken())&route=%2Fhome" + (mini ? "&mini=1" : "")
+        let frag = "token=\(readToken())&route=\(route)" + (mini ? "&mini=1" : "")
         return URL(string: "http://127.0.0.1:\(port)/#\(frag)")!
     }
 
@@ -112,7 +149,7 @@ final class Board: NSObject, WKNavigationDelegate {
     }
 
     func showDown() {
-        web.loadHTMLString("<body style='font:15px -apple-system;background:#16181a;color:#e8e6e1;display:flex;height:100vh;align-items:center;justify-content:center;text-align:center'><div><h2>The dashboard is not running</h2><p>Trying again…</p><p style='opacity:.6'>Or run: cd ~/Documents/random/focusflow &amp;&amp; npm start</p></div></body>", baseURL: nil)
+        web.loadHTMLString("<body style='font:15px -apple-system;background:#fbfbfa;color:#202020;display:flex;height:100vh;align-items:center;justify-content:center;text-align:center'><div><h2 style='font-weight:600'>Focusflow is starting…</h2><p style='color:#6c6b66'>Trying again in a moment.</p><p style='color:#8d8b85;font-size:13px'>If this does not go away, run <code>focusflow dashboard start</code> in Terminal.</p></div></body>", baseURL: nil)
         retry?.invalidate()
         retry = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.load() }
     }
@@ -125,6 +162,10 @@ final class App: NSObject, NSApplicationDelegate {
     var miniWin: NSPanel!
     let mainBoard = Board(mini: false)
     let miniBoard = Board(mini: true)
+    let quickBoard = Board(mini: false, route: "%2Fquick")
+    var quickWin: NSPanel!
+    var statusItem: NSStatusItem!
+    let notices = Notices()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         main = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
@@ -153,19 +194,94 @@ final class App: NSObject, NSApplicationDelegate {
         miniBoard.load()
 
         buildMenu()
+        setupQuickWindow()
+        setupStatusItem()
+        notices.app = self
+        notices.setup()
+        registerQuickHotKey { [weak self] in self?.showQuick() }
         NSApp.activate(ignoringOtherApps: true)
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.keepAlive() }
-        updateBadge()
-        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.updateBadge() }
+        poll()
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.poll() }
     }
 
-    // The Dock icon shows how many things need you; empty when nothing does.
-    func updateBadge() {
+    // Every few seconds: the Dock badge, the menu-bar item and notifications follow what needs the user.
+    func poll() {
         DispatchQueue.global().async {
-            guard let n = needsBadge(readPort()) else { return }
-            DispatchQueue.main.async { NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil }
+            guard let snap = fetchNeeds(readPort()) else { return }
+            DispatchQueue.main.async {
+                NSApp.dockTile.badgeLabel = snap.badge > 0 ? String(snap.badge) : nil
+                self.updateStatusItem(snap)
+                self.notices.consider(snap)
+            }
         }
     }
+
+    func openRoute(_ route: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        main.makeKeyAndOrderFront(nil)
+        mainBoard.web.evaluateJavaScript("location.hash = '#\(route)'", completionHandler: nil)
+    }
+
+    // ---- quick capture: a small floating window from anywhere (Control-Option-N) ----
+    func setupQuickWindow() {
+        quickWin = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 96),
+                           styleMask: [.titled, .closable, .fullSizeContentView],
+                           backing: .buffered, defer: false)
+        quickWin.titleVisibility = .hidden
+        quickWin.titlebarAppearsTransparent = true
+        quickWin.isMovableByWindowBackground = true
+        quickWin.level = .floating
+        quickWin.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        quickWin.contentView = quickBoard.web
+        quickBoard.onClose = { [weak self] in self?.quickWin.orderOut(nil) }
+    }
+
+    @objc func showQuick() {
+        if let s = NSScreen.main {
+            let f = s.visibleFrame
+            quickWin.setFrameOrigin(NSPoint(x: f.midX - 310, y: f.maxY - f.height * 0.28))
+        }
+        quickBoard.load()
+        NSApp.activate(ignoringOtherApps: true)
+        quickWin.makeKeyAndOrderFront(nil)
+    }
+
+    // ---- menu bar ----
+    func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Focusflow")
+        statusItem.button?.imagePosition = .imageLeading
+        updateStatusItem(NeedsSnapshot(badge: 0, total: 0, items: [], notifyEnabled: true, quiet: false))
+    }
+
+    func updateStatusItem(_ snap: NeedsSnapshot) {
+        statusItem.button?.title = snap.total > 0 ? " \(snap.total)" : ""
+        statusItem.button?.image = NSImage(systemSymbolName: snap.total > 0 ? "circle.inset.filled" : "checkmark.circle", accessibilityDescription: "Focusflow")
+        let m = NSMenu()
+        let head = NSMenuItem(title: snap.total == 0 ? "You’re all caught up" : "\(snap.total) thing\(snap.total == 1 ? "" : "s") need\(snap.total == 1 ? "s" : "") you", action: nil, keyEquivalent: "")
+        head.isEnabled = false
+        m.addItem(head)
+        for i in snap.items.prefix(8) {
+            let it = NSMenuItem(title: "\(kindLabel[i.kind] ?? i.kind): \(i.name)", action: #selector(openItem(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = i.slug
+            m.addItem(it)
+        }
+        m.addItem(.separator())
+        let nt = NSMenuItem(title: "New Task…", action: #selector(showQuick), keyEquivalent: "n")
+        nt.keyEquivalentModifierMask = [.control, .option]
+        nt.target = self
+        m.addItem(nt)
+        let open = NSMenuItem(title: "Open Focusflow", action: #selector(openMain), keyEquivalent: ""); open.target = self
+        m.addItem(open)
+        m.addItem(.separator())
+        m.addItem(withTitle: "Quit Focusflow", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        statusItem.menu = m
+    }
+
+    @objc func openItem(_ sender: NSMenuItem) { if let slug = sender.representedObject as? String { openRoute("/task/\(slug)") } }
+    @objc func openMain() { NSApp.activate(ignoringOtherApps: true); main.makeKeyAndOrderFront(nil) }
 
     // A long-running window should recover if the server was restarted under it.
     func keepAlive() {
@@ -262,6 +378,98 @@ final class App: NSObject, NSApplicationDelegate {
         if !hasVisibleWindows { main.makeKeyAndOrderFront(nil) }
         return true
     }
+}
+
+// ---- notifications: native, clickable, with Reply and Approve ----
+final class Notices: NSObject, UNUserNotificationCenterDelegate {
+    weak var app: App?
+    private var seen = Set<String>()
+    private var primed = false
+    private var held = 0
+    private let worthABanner: Set<String> = ["question", "review", "failed", "stalled"]
+
+    func setup() {
+        let c = UNUserNotificationCenter.current()
+        c.delegate = self
+        let reply = UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Your answer…")
+        let approve = UNNotificationAction(identifier: "approve", title: "Approve", options: [])
+        let open = UNNotificationAction(identifier: "open", title: "Open", options: [.foreground])
+        c.setNotificationCategories([
+            UNNotificationCategory(identifier: "question", actions: [reply, open], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "review", actions: [approve, open], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "other", actions: [open], intentIdentifiers: [], options: []),
+        ])
+        c.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    // New items since the last look get a banner; the first look after launch only takes stock.
+    // During quiet hours only urgent ones do; the rest arrive as one summary afterwards.
+    func consider(_ snap: NeedsSnapshot) {
+        let items = snap.items.filter { worthABanner.contains($0.kind) }
+        let fresh = items.filter { !seen.contains($0.key + "|" + $0.fp) }
+        for i in items { seen.insert(i.key + "|" + i.fp) }
+        if !primed { primed = true; return }
+        guard snap.notifyEnabled else { return }
+        for i in fresh {
+            if snap.quiet && !i.urgent { held += 1; continue }
+            post(i)
+        }
+        if !snap.quiet && held > 0 {
+            let c = UNMutableNotificationContent()
+            c.title = "While things were quiet"
+            c.body = "\(held) update\(held == 1 ? "" : "s") need\(held == 1 ? "s" : "") you."
+            c.categoryIdentifier = "other"
+            c.userInfo = ["slug": ""]
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "summary-\(Date().timeIntervalSince1970)", content: c, trigger: nil))
+            held = 0
+        }
+    }
+
+    private func post(_ i: Need) {
+        let c = UNMutableNotificationContent()
+        c.title = (i.urgent ? "Urgent · " : "") + (kindLabel[i.kind] ?? "Focusflow")
+        c.subtitle = i.name
+        c.body = i.kind == "review" ? "Claude says this is finished." : i.detail
+        c.sound = .default
+        c.categoryIdentifier = i.kind == "question" ? "question" : i.kind == "review" ? "review" : "other"
+        c.userInfo = ["slug": i.slug]
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: i.key + "|" + i.fp, content: c, trigger: nil))
+    }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .list, .sound])
+    }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        let slug = r.notification.request.content.userInfo["slug"] as? String ?? ""
+        switch r.actionIdentifier {
+        case "reply":
+            if let text = (r as? UNTextInputNotificationResponse)?.userText.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, !slug.isEmpty {
+                postJSON("/api/tasks/\(slug)/reply", ["text": text])
+            }
+        case "approve":
+            if !slug.isEmpty { postJSON("/api/tasks/\(slug)/action", ["action": "approve"]) }
+        default:
+            DispatchQueue.main.async { self.app?.openRoute(slug.isEmpty ? "/home" : "/task/\(slug)") }
+        }
+        done()
+    }
+}
+
+// ---- the global hotkey (Control-Option-N): Carbon hotkeys need no Accessibility permission ----
+var quickHotKeyAction: (() -> Void)?
+var quickHotKeyRef: EventHotKeyRef?
+func registerQuickHotKey(_ action: @escaping () -> Void) {
+    quickHotKeyAction = action
+    var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+        DispatchQueue.main.async { quickHotKeyAction?() }
+        return noErr
+    }, 1, &spec, nil, nil)
+    let id = EventHotKeyID(signature: OSType(0x46464C57), id: 1) // "FFLW"
+    RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &quickHotKeyRef)
 }
 
 let app = NSApplication.shared

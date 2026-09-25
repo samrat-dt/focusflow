@@ -144,6 +144,17 @@ await step('Settings saves quiet hours', async () => {
   if (s.quiet_hours !== '23:00-07:30') throw new Error(s.quiet_hours);
 });
 
+await step('The quick-capture window adds a task with shorthand', async () => {
+  await b.goto(`${BASE}/?q=1#token=${TOKEN}&route=%2Fquick`);
+  await b.until(`!!document.querySelector('[data-key="quick"]')`);
+  await b.evaluate(typeInto('[data-key="quick"]', 'Check the invoice totals #ops'));
+  await b.evaluate(key('[data-key="quick"]', 'Enter'));
+  await b.until(`document.body.textContent.includes('Added')`, 8000);
+  const t = (await api('/api/tasks')).tasks.find(x => x.name === 'Check the invoice totals');
+  if (!t || t.project !== 'ops' || t.status !== 'next') throw new Error(JSON.stringify(t));
+  await b.goto(`${BASE}/?q=2#token=${TOKEN}`);
+});
+
 await step('Every page renders without errors', async () => {
   for (const r of ['/home', '/inbox', '/inbox/keys', '/tasks?view=list', '/projects', '/project/website?tab=assistant', '/project/website?tab=brief', '/memory', '/archive', '/settings', '/about', '/about/vision', '/help/troubleshooting', '/task/nope']) {
     await b.evaluate(`location.hash = '#${r}'; true`);
