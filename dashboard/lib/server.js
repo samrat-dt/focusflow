@@ -11,6 +11,7 @@ import { focusEnv } from './focus-env.js';
 import { readProjects as readFocusProjects, readProjectsFull as readFocusProjectsFull, readOwners as readFocusOwners, readWorkDir as readFocusWorkDir, readSession as readFocusSession, readRun as readFocusRun } from './focus-reader.js';
 import { buildNeeds, buildSince } from './needs.js';
 import { learnedBias, createGate } from './attention.js';
+import { gitSince, latestSummary } from './proof.js';
 import { taskEditArgs, projectEditArgs, writeBrief, writeNote, validateSettings, saveSettings, SETTINGS, EditError } from './editing.js';
 import { lastActivity } from './activity.js';
 import { tailLog, pidAlive } from './runs.js';
@@ -468,6 +469,60 @@ export function createApp({
     return { ok: true, mode: 'headless' };
   }
 
+  // ---- review: proof of work, and "request changes" (the judgement loop) ----
+  async function proofOfWork(slug) {
+    const t = store.getTask(slug);
+    let workDir = null;
+    try { workDir = readWorkDir({ slug }) ?? null; } catch { /* no folder to inspect */ }
+    const since = t.session_started || t.created_at;
+    const [git, rules] = await Promise.all([
+      gitSince({ workDir, since }).catch(() => null),
+      runFocusCmd(['memories', '--json'], 10000).then(r => JSON.parse(r.stdout || '[]')).catch(() => []),
+    ]);
+    const dir = path.join(config.focusRoot, 'tasks', slug, 'updates');
+    let note = null;
+    try {
+      const f = fs.readdirSync(dir).filter(x => x.endsWith('.md')).sort().at(-1);
+      if (f) note = { file: f, text: (readText(path.join(dir, f)) ?? '').slice(0, 1500) };
+    } catch { /* no notes */ }
+    return {
+      summary: latestSummary(store.thread(config.device, slug)),
+      note, git, since, work_dir: workDir,
+      rules: rules.filter(m => m.kind === 'rule' && (m.scope === 'global' || (t.project && m.project === t.project))),
+    };
+  }
+
+  // The human says what is not right yet. Optionally that becomes a house rule for the project (or
+  // everywhere), so no future session makes the same mistake; then the feedback goes to the task, which
+  // gets back to work (in its open terminal, or in the background).
+  async function requestChanges(slug, body) {
+    const t = store.getTask(slug);
+    if (t.archived) throw new HttpError(409, 'archived tasks cannot be changed');
+    if (!['review', 'in-progress', 'paused'].includes(t.status)) throw new HttpError(409, `only work in review can be sent back, this one is ${t.status}`);
+    const fb = checkText(body.feedback);
+    if (!fb.ok) throw new HttpError(400, fb.error);
+    if (fb.text.length > 350) throw new HttpError(400, 'Keep the feedback under 350 characters; put detail in the brief.');
+    let rule = null;
+    if (body.rule !== undefined && body.rule !== null && body.rule !== '') {
+      const r = checkText(body.rule);
+      if (!r.ok) throw new HttpError(400, `rule: ${r.error}`);
+      const scope = body.rule_scope === 'global' || !t.project ? ['--global'] : ['--project', t.project];
+      try { rule = JSON.parse((await runFocusCmd(['remember', r.text, '--kind', 'rule', ...scope, '--json'], 10000)).stdout); }
+      catch (err) { throw new HttpError(502, `could not save the rule: ${err.message}`); }
+    }
+    const acted = noteActed(slug, ['review']);
+    const text = `Changes requested: ${fb.text}`;
+    const live = status.live.has(slug);
+    const background = !live && (!t.has_session || t.harness === 'claude');
+    const sent = await sendMessageCore(slug, background ? { text, mode: 'headless', confirm: true } : { text, mode: 'queue' });
+    if (!background && t.status === 'review') {
+      try { await runFocusCmd(['update', 'task', slug, '--status', 'in-progress'], 15000); refresh(); } catch { /* the stage catches up when the session answers */ }
+    }
+    record('review.changes_requested', `task:${slug}`, { slug, has_rule: !!rule, rule_scope: rule?.scope ?? null });
+    acted();
+    return { ok: true, mode: sent.mode, rule };
+  }
+
   // From a project coordinator's chat, `fanout` also tells every open subtask of that project.
   async function sendMessage(slug, body) {
     const acted = noteActed(slug, ['question', 'stalled', 'failed']);
@@ -896,6 +951,10 @@ export function createApp({
       else if (body.scope === 'task' && SLUG.test(body.task ?? '')) args.push('--task', body.task);
       else return fail(res, 400, 'scope must be task (with task), project (with project) or global');
       if (body.pin === true) args.push('--pin');
+      if (body.kind === 'rule') {
+        if (body.scope === 'task') return fail(res, 400, 'a house rule applies to a whole project or everywhere');
+        args.push('--kind', 'rule');
+      }
       try {
         const out = await serial(() => runFocusCmd(args, 10000));
         return json(res, 200, { ok: true, memory: JSON.parse(out.stdout) });
@@ -960,7 +1019,7 @@ export function createApp({
         return fail(res, 502, err.message);
       }
     }
-    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run)$/.exec(pathname);
+    const tm = /^\/api\/tasks\/([^/]+)\/(thread|message|read|action|run|proof|request-changes)$/.exec(pathname);
     if (tm) {
       let slug;
       try { slug = decodeURIComponent(tm[1]); } catch { return fail(res, 400, 'bad slug'); }
@@ -974,8 +1033,13 @@ export function createApp({
         if (!need('GET')) return;
         return json(res, 200, runInfo(slug) ?? { status: null, running: false });
       }
+      if (tm[2] === 'proof') {
+        if (!need('GET')) return;
+        return json(res, 200, await proofOfWork(slug));
+      }
       if (!need('POST')) return;
       const body = await readJson(req);
+      if (tm[2] === 'request-changes') return json(res, 200, await serial(() => requestChanges(slug, body)));
       if (tm[2] === 'message') return json(res, 200, await serial(() => sendMessage(slug, body)));
       if (tm[2] === 'action') return json(res, 200, await serial(() => taskAction(slug, body)));
       return json(res, 200, await markRead(slug));

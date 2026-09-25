@@ -5,7 +5,7 @@ import { S, act, edit, send, openTerminal, taskBy, notify, load } from '../state
 import { route, go, setQuery, routeOpts, onRoute } from '../router.js';
 import { menu, toast, oops, markdown, dialog, empty } from '../ui.js';
 import { STAGE_NAME, PRIORITY_NAME, humanTime, duration, primaryAction } from '../logic.js';
-import { statusLine, projectName, taskMenu, displayName } from '../parts.js';
+import { statusLine, projectName, taskMenu, displayName, requestChanges } from '../parts.js';
 
 const cache = new Map(); // slug -> { detail, thread, run, memories }
 const drafts = new Map();
@@ -22,6 +22,7 @@ async function fetchAll(slug, parts = ['detail', 'thread', 'run', 'memories']) {
     thread: () => api(`/api/tasks/${enc}/thread`),
     run: () => api(`/api/tasks/${enc}/run`),
     memories: () => api(`/api/memories?task=${enc}`).then(r => r.memories),
+    proof: () => api(`/api/tasks/${enc}/proof`),
   };
   if (parts.includes('detail')) {
     try { c.detail = await get.detail(); c.error = null; } catch (err) { c.error = err; cache.set(slug, c); notify(); return; } // no such task: nothing else to ask
@@ -74,6 +75,28 @@ function props(t, c) {
     row('Waiting on', 'clock', pbtn(t.waiting_on, async () => { const v = await askText({ title: 'Waiting on', label: 'Who or what is this waiting on?', value: t.waiting_on ?? '', hint: 'Leave empty if it isn’t waiting on anything.', placeholder: 'e.g. Legal sign-off' }); if (v !== null) save(t.slug, { waiting: v.trim() || null }); }, 'Nobody')),
     row('Tags', 'hash', pbtn((t.tags ?? []).map(x => `#${x}`).join('  '), async () => { const v = await askText({ title: 'Tags', label: 'Tags, separated by commas', value: (t.tags ?? []).join(', '), placeholder: 'design, launch' }); if (v !== null) save(t.slug, { tags: v.split(',').map(x => x.trim()).filter(Boolean) }, 'Tags updated.'); }, 'Add tags')),
     row('Session', 'terminal', h('span', { style: 'color:var(--ink-2)' }, session)));
+}
+
+// ---------- review panel: proof of work, and the two decisions ----------
+let showFiles = false;
+function reviewPanel(t, c) {
+  if (t.status !== 'review' || t.kind === 'project_agent') return null;
+  const p = c.proof;
+  if (!p) { fetchAll(t.slug, ['proof']); return h('div.callout', { style: 'margin-top:8px' }, icon('clock'), 'Gathering what changed…'); }
+  const g = p.git;
+  return h('div', { style: 'margin-top:12px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);padding:20px 24px' },
+    h('div.row', { style: 'margin-bottom:12px' }, h('div.attn-icon.review', icon('check')), h('div.grow', h('strong', 'Ready for your review'), h('div', { style: 'color:var(--muted);font-size:13px' }, 'Check the work, then approve it or send it back with what to change.')),
+      h('button.btn', { type: 'button', on: { click: () => requestChanges(t, { onDone: () => fetchAll(t.slug) }) } }, 'Request changes'),
+      h('button.btn.primary', { type: 'button', on: { click: () => act(t.slug, 'approve') } }, icon('check'), 'Approve')),
+    p.summary && h('div', { style: 'margin-top:8px' }, h('div.attn-kind', `What Claude says · ${humanTime(p.summary.at)}`), h('div.attn-detail.quote', p.summary.text)),
+    p.note && h('div', { style: 'margin-top:14px' }, h('div.attn-kind', 'Latest progress note'), markdown(p.note.text)),
+    g && h('div', { style: 'margin-top:14px' },
+      h('div.attn-kind', `In the project folder since this task started${g.branch ? ` · branch ${g.branch}` : ''}`),
+      g.commits.length ? h('ul', { style: 'margin:6px 0;padding-left:20px' }, g.commits.slice(0, 6).map(cm => h('li', h('code', cm.hash), ' ', cm.subject))) : h('div', { style: 'color:var(--muted);margin-top:4px' }, 'No commits.'),
+      g.files.length ? h('div', h('button.btn.ghost.sm', { type: 'button', on: { click: () => { showFiles = !showFiles; notify(); } } }, `${g.files.length} file${g.files.length === 1 ? '' : 's'} changed${g.uncommitted ? ` (${g.uncommitted} not committed)` : ''}`, icon(showFiles ? 'chevronDown' : 'chevronRight')),
+        showFiles && h('pre', { style: 'font:12px/1.6 var(--mono);background:var(--sunken);padding:8px 12px;border-radius:8px;max-height:200px;overflow:auto' }, g.files.join('\n'))) : null,
+      h('div', { style: 'font-size:12px;color:var(--faint);margin-top:4px' }, 'Other tasks in the same folder may have contributed some of these.')),
+    p.rules?.length ? h('div', { style: 'margin-top:14px' }, h('div.attn-kind', 'Your house rules: does it follow them?'), h('ul', { style: 'margin:6px 0;padding-left:20px' }, p.rules.map(r => h('li', r.body)))) : null);
 }
 
 // ---------- run panel ----------
@@ -130,36 +153,36 @@ function conversation(t, c) {
     closed && h('div.callout', { style: 'margin-top:16px' }, icon('info'), h('span', t.archived ? 'This task is archived. Restore it to continue.' : 'This task is done. Reopen it to continue the conversation.')));
 }
 
-const MEMORY_KIND = { answer: 'You answered', instruction: 'You said', decision: 'Decision', note: 'Note' };
+const MEMORY_KIND = { answer: 'You answered', instruction: 'You said', decision: 'Decision', note: 'Note', rule: 'House rule' };
 export function memoryList(list, { onChange, scopeLabel = true } = {}) {
   const op = async (m, o) => { try { await api(`/api/memories/${m.id}/${o}`, 'POST', {}); toast({ pin: 'Pinned.', unpin: 'Unpinned.', promote: 'Now applies more widely.', forget: 'Forgotten.' }[o]); } catch (err) { oops(err); } onChange?.(); };
   if (!list.length) return null;
   return h('div.list', list.map(m => h('div.item', { style: 'cursor:default;align-items:flex-start' },
-    h('div.attn-icon', { style: 'width:28px;height:28px' }, icon(m.pinned ? 'pin' : m.kind === 'answer' ? 'message' : 'memory')),
+    h('div.attn-icon', { style: 'width:28px;height:28px' }, icon(m.kind === 'rule' ? 'shield' : m.pinned ? 'pin' : m.kind === 'answer' ? 'message' : 'memory')),
     h('div.body',
       h('div.attn-kind', [MEMORY_KIND[m.kind] ?? m.kind, scopeLabel && (m.scope === 'global' ? 'Everywhere' : m.scope === 'project' ? `Project: ${projectName(m.project)}` : m.task ? `Task: ${taskBy(m.task)?.name ?? m.task}` : null), humanTime(m.created_at)].filter(Boolean).join(' · ')),
       m.question && h('div', { style: 'color:var(--muted);font-size:13px;margin-top:2px' }, `Q: ${m.question}`),
       h('div', { style: 'margin-top:2px;white-space:pre-wrap' }, m.body)),
     h('div.end', h('button.btn.ghost.icon.sm', { type: 'button', 'aria-label': 'Memory actions', on: { click: e => menu(e.currentTarget, [
-      { label: m.pinned ? 'Unpin' : 'Pin (always include)', icon: 'pin', run: () => op(m, m.pinned ? 'unpin' : 'pin') },
+      m.kind !== 'rule' && { label: m.pinned ? 'Unpin' : 'Pin (always include)', icon: 'pin', run: () => op(m, m.pinned ? 'unpin' : 'pin') },
       m.scope !== 'global' && { label: m.scope === 'task' && m.project ? 'Apply to the whole project' : 'Apply everywhere', icon: 'sparkle', run: () => op(m, 'promote') },
       'sep',
       { label: 'Forget', icon: 'trash', danger: true, run: () => op(m, 'forget') },
     ]) } }, icon('more'))))));
 }
 
-export function rememberForm({ task, project, onDone }) {
-  const input = h('input.input', { placeholder: 'Teach Claude something to remember…', maxlength: '380', 'aria-label': 'Remember something', dataset: { key: 'remember' } });
+export function rememberForm({ task, project, onDone, kind = null }) {
+  const input = h('input.input', { placeholder: kind === 'rule' ? 'Add a house rule, e.g. Every change needs a test' : 'Teach Claude something to remember…', maxlength: '380', 'aria-label': 'Remember something', dataset: { key: 'remember' } });
   const scope = h('select.select', { style: 'width:auto', 'aria-label': 'Applies to' },
-    task && h('option', { value: 'task' }, 'This task'), project && h('option', { value: 'project' }, 'Whole project'), h('option', { value: 'global' }, 'Everywhere'));
+    kind !== 'rule' && task && h('option', { value: 'task' }, 'This task'), project && h('option', { value: 'project' }, 'Whole project'), h('option', { value: 'global' }, 'Everywhere'));
   const go2 = async () => {
     const text = input.value.trim();
     if (!text) return;
-    try { await api('/api/memories/new', 'POST', { text, scope: scope.value, task, project }); toast('Remembered. Every future session will know this.'); input.value = ''; onDone?.(); }
+    try { await api('/api/memories/new', 'POST', { text, scope: scope.value, task, project, ...(kind ? { kind } : {}) }); toast(kind === 'rule' ? 'House rule added. Every future session will follow it.' : 'Remembered. Every future session will know this.'); input.value = ''; onDone?.(); }
     catch (err) { oops(err, 'Could not remember that'); }
   };
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go2(); } });
-  return h('div.row', { style: 'margin-bottom:16px' }, input, scope, h('button.btn', { type: 'button', on: { click: go2 } }, 'Remember'));
+  return h('div.row', { style: 'margin-bottom:16px' }, input, scope, h('button.btn', { type: 'button', on: { click: go2 } }, kind === 'rule' ? 'Add rule' : 'Remember'));
 }
 
 function memoryTab(t, c) {
@@ -199,7 +222,7 @@ function notesTab(t, c) {
 // ---------- page ----------
 export const task = {
   title: r => displayName(taskBy(r.id)) || 'Task',
-  deps: r => [taskBy(r.id), cache.get(r.id), r.query, editingBrief, showLog, drafts.size],
+  deps: r => [taskBy(r.id), cache.get(r.id), r.query, editingBrief, showLog, showFiles, drafts.size],
   render(r, ctx) {
     const slug = r.id;
     const c = cache.get(slug);
@@ -230,6 +253,7 @@ export const task = {
           !t.archived && h('button.btn', { type: 'button', title: 'Opens this task’s Claude session in your terminal app, so you can watch or type directly.', on: { click: () => openTerminal(slug) } }, icon('terminal'), t.terminal_open ? 'Show terminal' : 'Open in terminal'),
           h('button.btn.icon', { type: 'button', 'aria-label': 'More actions', on: { click: e => taskMenu(e.currentTarget, t) } }, icon('more')))),
       runPanel(t, cc),
+      reviewPanel(t, cc),
       props(t, cc),
       h('div.tabs', { role: 'tablist' }, tabs.map(([id, label, n]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === id), on: { click: () => setQuery({ tab: id === 'conversation' ? '' : id }) } }, label, n ? h('span.badge.soft', String(n)) : null))),
       h('div', { role: 'tabpanel' },

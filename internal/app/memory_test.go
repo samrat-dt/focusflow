@@ -181,3 +181,34 @@ func TestMemory_CleanHumanTextStripsCues(t *testing.T) {
 		}
 	}
 }
+
+func TestMemory_HouseRulesComeFirstAndApplyToTheProject(t *testing.T) {
+	setupRoot(t)
+	seedProjectTasks(t)
+	unbindSession(t)
+	captureStdout(t, func() {
+		if rc := cmdRemember([]string{"Every change needs a test", "--project", "web", "--kind", "rule"}); rc != 0 {
+			t.Fatalf("remember rule rc=%d", rc)
+		}
+	})
+	if rc := cmdRemember([]string{"x", "--task", "pricing", "--kind", "rule"}); rc != 2 {
+		t.Errorf("a rule for one task must be refused, rc=%d", rc)
+	}
+	// Inside a session, a rule goes to the task's project.
+	bindSession(t, "launch", "33333333-3333-4333-8333-333333333333")
+	captureStdout(t, func() {
+		if rc := cmdRemember([]string{"Keep copy under 80 words", "--kind", "rule"}); rc != 0 {
+			t.Fatalf("rule in session rc=%d", rc)
+		}
+	})
+	unbindSession(t)
+	t.Setenv("FOCUSFLOW_TASK", "pricing")
+	ctx := captureStdout(t, func() { cmdHookSessionStart(nil) })
+	rulesAt := strings.Index(ctx, "HOUSE RULES")
+	if rulesAt < 0 || !strings.Contains(ctx, "Every change needs a test") || !strings.Contains(ctx, "Keep copy under 80 words") {
+		t.Fatalf("house rules missing from session context:\n%s", ctx)
+	}
+	if strings.Contains(ctx[rulesAt:], "This project:\n- ") && strings.Index(ctx, "This project:") < rulesAt {
+		t.Errorf("house rules must come first")
+	}
+}

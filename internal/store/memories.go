@@ -16,7 +16,7 @@ import (
 // human never has to say the same thing twice.
 type Memory struct {
 	ID          string
-	Kind        string // answer | instruction | decision | note
+	Kind        string // answer | instruction | decision | note | rule (a house rule: always follow)
 	Scope       string // task | project | global
 	TaskSlug    sql.NullString
 	ProjectSlug sql.NullString
@@ -31,14 +31,14 @@ type Memory struct {
 const MemoryCols = "id, kind, scope, task_slug, project_slug, question, body, source, pinned, status, created_at"
 
 var (
-	MemoryKinds  = []string{"answer", "instruction", "decision", "note"}
+	MemoryKinds  = []string{"answer", "instruction", "decision", "note", "rule"}
 	MemoryScopes = []string{"task", "project", "global"}
 )
 
 const memoriesDDL = `
 CREATE TABLE IF NOT EXISTS memories (
     id            TEXT PRIMARY KEY,
-    kind          TEXT NOT NULL CHECK (kind IN ('answer','instruction','decision','note')),
+    kind          TEXT NOT NULL CHECK (kind IN ('answer','instruction','decision','note','rule')),
     scope         TEXT NOT NULL CHECK (scope IN ('task','project','global')),
     task_slug     TEXT,
     project_slug  TEXT,
@@ -67,6 +67,37 @@ func migrateV4Memories(ctx context.Context, conn *sql.Conn) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// v5 widens the kind CHECK to allow house rules. SQLite cannot alter a CHECK, so the table is rebuilt.
+func migrateV5HouseRules(ctx context.Context, conn *sql.Conn) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	steps := []string{
+		`ALTER TABLE memories RENAME TO memories_v4`,
+		`DROP INDEX IF EXISTS idx_memories_task`,
+		`DROP INDEX IF EXISTS idx_memories_project`,
+		memoriesDDL,
+		`INSERT INTO memories (` + MemoryCols + `) SELECT ` + MemoryCols + ` FROM memories_v4`,
+		`DROP TABLE memories_v4`,
+		`PRAGMA user_version = 5`,
+	}
+	for _, q := range steps {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("house rules migration: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// RulesFor are the house rules a session in project (or anywhere) must follow, newest first.
+func RulesFor(db *sql.DB, projectSlug string) ([]*Memory, error) {
+	return queryMemories(db, `SELECT `+MemoryCols+` FROM memories
+		WHERE status = 'active' AND kind = 'rule' AND (scope = 'global' OR (scope = 'project' AND project_slug = ?))
+		ORDER BY scope = 'global', created_at DESC`, projectSlug)
 }
 
 func ScanMemory(row interface{ Scan(dest ...any) error }) (*Memory, error) {
@@ -257,14 +288,14 @@ func queryMemories(db *sql.DB, q string, args ...any) ([]*Memory, error) {
 // own. Each group is newest first; limit caps each group.
 func RecallMemories(db *sql.DB, taskSlug, projectSlug string, limit int) (global, project, task []*Memory, err error) {
 	global, err = queryMemories(db, `SELECT `+MemoryCols+` FROM memories
-		WHERE status = 'active' AND (scope = 'global' OR (pinned = 1 AND scope = 'project' AND project_slug = ?))
+		WHERE status = 'active' AND kind != 'rule' AND (scope = 'global' OR (pinned = 1 AND scope = 'project' AND project_slug = ?))
 		ORDER BY pinned DESC, created_at DESC LIMIT ?`, projectSlug, limit)
 	if err != nil {
 		return
 	}
 	if projectSlug != "" {
 		project, err = queryMemories(db, `SELECT `+MemoryCols+` FROM memories
-			WHERE status = 'active' AND pinned = 0 AND project_slug = ?
+			WHERE status = 'active' AND kind != 'rule' AND pinned = 0 AND project_slug = ?
 			  AND (scope = 'project' OR (scope = 'task' AND task_slug != ? AND kind IN ('answer','decision')))
 			ORDER BY created_at DESC LIMIT ?`, projectSlug, taskSlug, limit)
 		if err != nil {
@@ -272,7 +303,7 @@ func RecallMemories(db *sql.DB, taskSlug, projectSlug string, limit int) (global
 		}
 	}
 	task, err = queryMemories(db, `SELECT `+MemoryCols+` FROM memories
-		WHERE status = 'active' AND scope = 'task' AND task_slug = ?
+		WHERE status = 'active' AND kind != 'rule' AND scope = 'task' AND task_slug = ?
 		ORDER BY pinned DESC, created_at DESC LIMIT ?`, taskSlug, limit)
 	return
 }

@@ -84,3 +84,35 @@ export function taskCard(t, { draggable = true, landed = false } = {}) {
 }
 
 export { STAGE_NAME, PRIORITY_NAME };
+
+// "Request changes": say what isn't right; optionally turn it into a house rule every future session follows.
+export function requestChanges(t, { onDone } = {}) {
+  import('./ui.js').then(({ dialog, toast, oops }) => import('./api.js').then(({ api }) => dialog((box, close) => {
+    const fb = h('textarea.textarea', { rows: '4', maxlength: '350', placeholder: 'What needs to change? Be specific: Claude gets back to work with this.', autofocus: true, 'aria-label': 'What needs to change' });
+    const asRule = h('input', { type: 'checkbox', id: 'as-rule' });
+    const rule = h('input.input', { maxlength: '350', placeholder: 'e.g. Every page must work on mobile', 'aria-label': 'House rule' });
+    const scope = h('select.select', { style: 'width:auto', 'aria-label': 'Rule applies to' }, t.project && h('option', { value: 'project' }, `All of ${projectName(t.project)}`), h('option', { value: 'global' }, 'Everywhere'));
+    const ruleBox = h('div', { hidden: true, style: 'margin-top:8px' }, h('div.row', rule, scope), h('div', { style: 'font-size:12px;color:var(--muted);margin-top:6px' }, 'Every future session will be told to follow this, and to check its work against it before saying it’s done.'));
+    let touched = false;
+    rule.addEventListener('input', () => { touched = true; });
+    fb.addEventListener('input', () => { if (!touched) rule.value = fb.value; });
+    asRule.addEventListener('change', () => { ruleBox.hidden = !asRule.checked; if (asRule.checked && !rule.value) rule.value = fb.value; });
+    const err = h('div.banner.error', { hidden: true });
+    const go2 = async btn => {
+      if (!fb.value.trim()) return fb.focus();
+      btn.disabled = true;
+      try {
+        const r = await api(`/api/tasks/${encodeURIComponent(t.slug)}/request-changes`, 'POST', { feedback: fb.value.trim(), ...(asRule.checked && rule.value.trim() ? { rule: rule.value.trim(), rule_scope: scope.value } : {}) });
+        close();
+        toast(r.rule ? 'Sent back with your feedback, and saved as a house rule.' : 'Sent back with your feedback. Claude is on it.');
+        onDone?.();
+      } catch (e) { btn.disabled = false; err.hidden = false; err.textContent = e.message; }
+    };
+    const send = h('button.btn.primary', { type: 'button', on: { click: e => go2(e.currentTarget) } }, 'Send back');
+    fb.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go2(send); } });
+    box.append(h('h2', 'Request changes'), h('p', { style: 'margin:-8px 0 16px;color:var(--muted)' }, displayName(t)), err, fb,
+      h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:14px;font-weight:500' }, asRule, 'Make this a house rule, so it doesn’t happen again'),
+      ruleBox,
+      h('div.dialog-foot', h('button.btn', { type: 'button', on: { click: close } }, 'Cancel'), send));
+  }, { label: 'Request changes' }))).catch(() => {});
+}

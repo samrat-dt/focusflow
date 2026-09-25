@@ -42,12 +42,13 @@ func openMemoryDB() (*sql.DB, int) {
 
 func printRememberUsage() {
 	fmt.Println(`focusflow remember "<text>" [--task <slug> | --project <slug> | --global]
-                   [--kind decision|note] [--pin] [--said] [--json]
+                   [--kind decision|note|rule] [--pin] [--said] [--json]
 
 Records something every future session in that scope should know.
 Scope defaults to the task of the current session. --said records it as
 something the human told the task (an answer to its pending question, or
-an instruction), which is what the dashboard uses.`)
+an instruction), which is what the dashboard uses. --kind rule records a
+house rule for a project or everywhere: every session there must follow it.`)
 }
 
 // cmdRemember implements `focusflow remember`.
@@ -102,8 +103,12 @@ func cmdRemember(args []string) int {
 		printRememberUsage()
 		return 2
 	}
-	if kind != "decision" && kind != "note" {
-		fmt.Fprintln(os.Stderr, "error: --kind must be decision or note")
+	if kind != "decision" && kind != "note" && kind != "rule" {
+		fmt.Fprintln(os.Stderr, "error: --kind must be decision, note or rule")
+		return 2
+	}
+	if kind == "rule" && taskSlug != "" {
+		fmt.Fprintln(os.Stderr, "error: a house rule applies to a whole project (--project) or everywhere (--global), not one task")
 		return 2
 	}
 	scopes := 0
@@ -129,6 +134,16 @@ func cmdRemember(args []string) int {
 		if scopes == 0 {
 			taskSlug = cur
 		}
+	}
+	if kind == "rule" && scopes == 0 && taskSlug != "" {
+		// Inside a task session, a rule belongs to the task's project (or everywhere when it has none).
+		t, err := ResolveTask(db, taskSlug, false)
+		if err == nil && t.ProjectSlug.Valid {
+			projectSlug, taskSlug = t.ProjectSlug.String, ""
+		} else {
+			global, taskSlug = true, ""
+		}
+		scopes = 1
 	}
 	if scopes == 0 && taskSlug == "" {
 		fmt.Fprintln(os.Stderr, "error: not inside a task session; say where it applies with --task, --project or --global")
@@ -348,10 +363,24 @@ func shortDate(iso string) string {
 // when nothing is remembered. Capped so it never crowds out the brief.
 func memoryContext(db *sql.DB, task *store.Task) string {
 	global, project, own, err := store.RecallMemories(db, task.Slug, task.ProjectSlug.String, 15)
-	if err != nil || len(global)+len(project)+len(own) == 0 {
+	if err != nil {
+		return ""
+	}
+	rules, _ := store.RulesFor(db, task.ProjectSlug.String)
+	if len(global)+len(project)+len(own)+len(rules) == 0 {
 		return ""
 	}
 	var b strings.Builder
+	if len(rules) > 0 {
+		b.WriteString("HOUSE RULES (the user's standards, learned from their reviews; always follow them, and check your work against them before saying it is done):\n")
+		for _, r := range rules {
+			b.WriteString("- " + r.Body + "\n")
+		}
+		b.WriteString("\n")
+	}
+	if len(global)+len(project)+len(own) == 0 {
+		return b.String()
+	}
 	b.WriteString("WHAT YOU ALREADY KNOW (from focusflow memory: things the user already answered or decided; " +
 		"treat them as settled, do not ask them again; if one seems wrong or outdated, ask the user whether to change it, " +
 		"and when the user states a new durable decision, record it with `focusflow remember \"<decision>\"`):\n")

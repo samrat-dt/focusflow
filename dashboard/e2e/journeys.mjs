@@ -8,6 +8,7 @@ const step = async (name, fn) => { try { await fn(); results.push(`PASS ${name}`
 const b = await launch();
 const $ = sel => `document.querySelector(${JSON.stringify(sel)})`;
 const clickText = (sel, text) => `(() => { const el = [...document.querySelectorAll(${JSON.stringify(sel)})].find(n => n.textContent.trim().includes(${JSON.stringify(text)})); if (!el) throw new Error('no ' + ${JSON.stringify(text)}); el.click(); return true; })()`;
+const inRow = (rowText, btnText) => `(() => { const row = [...document.querySelectorAll('.attn')].find(r => r.textContent.includes(${JSON.stringify(rowText)})); if (!row) throw new Error('no row ' + ${JSON.stringify(rowText)}); const b = [...row.querySelectorAll('button')].find(x => x.textContent.trim().includes(${JSON.stringify(btnText)})); if (!b) throw new Error('no button ' + ${JSON.stringify(btnText)}); b.click(); return true; })()`;
 const typeInto = (sel, text) => `(() => { const el = ${$(sel)}; el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`;
 const key = (sel, k, extra = {}) => `(() => { const el = ${sel ? $(sel) : 'document.activeElement || document.body'}; el.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, ...${JSON.stringify(extra)} })); return true; })()`;
 
@@ -15,7 +16,7 @@ await b.goto(`${BASE}/#token=${TOKEN}`);
 await step('Home loads with Needs you items', async () => { await b.until(`document.querySelectorAll('.attn').length >= 2`); });
 
 await step('Approve shows Undo, and Undo cancels the approval', async () => {
-  await b.evaluate(clickText('.attn .btn', 'Approve'));
+  await b.evaluate(inRow('Write onboarding email', 'Approve'));
   await b.until(`[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Approved'))`);
   await b.evaluate(clickText('.toast .btn', 'Undo'));
   await b.wait(7500);
@@ -25,7 +26,7 @@ await step('Approve shows Undo, and Undo cancels the approval', async () => {
 });
 
 await step('Approve without Undo really approves after the window', async () => {
-  await b.evaluate(clickText('.attn .btn', 'Approve'));
+  await b.evaluate(inRow('Write onboarding email', 'Approve'));
   await b.wait(8000);
   const t = (await api('/api/tasks')).tasks.find(x => x.slug === 'onboard');
   if (t.status !== 'done') throw new Error(`status is ${t.status}`);
@@ -59,6 +60,21 @@ await step('A background run that ends cleanly is not reported as a failure', as
   if (t.auto_run_status !== 'finished') throw new Error(`auto_run_status is ${t.auto_run_status}`);
   const n = await api('/api/needs-you');
   if (n.items.some(i => i.kind === 'failed')) throw new Error('a clean run shows as failed on Home');
+});
+
+await step('Request changes shows proof of work, sends the feedback back and saves a house rule', async () => {
+  await b.evaluate(`location.hash = '#/task/faq'; true`);
+  await b.until(`document.body.textContent.includes('Ready for your review')`);
+  await b.evaluate(clickText('.btn', 'Request changes'));
+  await b.until(`!!document.querySelector('.dialog textarea')`);
+  await b.evaluate(typeInto('.dialog textarea', 'Answers must link to the docs'));
+  await b.evaluate(`(() => { const c = document.querySelector('#as-rule'); c.checked = true; c.dispatchEvent(new Event('change')); return true; })()`);
+  await b.evaluate(clickText('.dialog .btn', 'Send back'));
+  await b.until(`[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('house rule'))`, 15000);
+  const mem = (await api('/api/memories?project=website')).memories;
+  if (!mem.some(m => m.kind === 'rule' && m.body === 'Answers must link to the docs')) throw new Error(JSON.stringify(mem));
+  const t = (await api('/api/tasks')).tasks.find(x => x.slug === 'faq');
+  if (t.status !== 'in-progress') throw new Error(`stage is ${t.status}`);
 });
 
 await step('N opens New task; Enter adds it to Up next with #project !priority', async () => {

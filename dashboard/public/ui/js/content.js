@@ -93,7 +93,12 @@ it's captured, with the question it answered, and handed to every later session 
 everywhere. Claude Code's own memory is written by the agent, per repository. Focusflow's is **written by you, about
 your work, and shared across every session**. It grows every time you reply.
 
-## 3. Work, not sessions
+## 3. It learns your judgement
+When you send work back, say what's wrong. Tick **Make this a house rule** and that standard is handed to every
+future session in the project, which must check its work against it before calling it done. Reviews show your rules
+as a checklist next to the proof of work. The more you review, the less you have to correct.
+
+## 4. Work, not sessions
 Tasks carry a brief, notes, a stage (Backlog → Up next → In progress → Ready for review → Done), priority, due date and
 tags, and they belong to projects. Sessions come and go underneath. You can always drop into the live session in a
 terminal, but you rarely need to.
@@ -103,7 +108,8 @@ terminal, but you rarely need to.
 | You want to… | Focusflow gives you |
 |---|---|
 | **Hand off work and get on with your day** | Message a task; it runs in the background; you're notified when it needs you |
-| **Approve finished work quickly** | Ready for review on Home, with Approve (and Undo) |
+| **Approve finished work quickly** | Ready for review on Home, proof of work on the task, Approve (and Undo) |
+| **Stop correcting the same mistakes** | Request changes → house rules every future session follows |
 | **Answer an agent's question from anywhere** | Reply inline on Home or in the Inbox; the answer is remembered |
 | **Stop repeating yourself** | Memory: answers, instructions and decisions, pinned or promoted to a whole project |
 | **Juggle several projects** | Projects with progress, a board and list across everything, filters, bulk actions |
@@ -145,12 +151,15 @@ is how that person works.
 ## Shipped
 - **Memory from the human channel.** Every answer and instruction, remembered and recalled.
 - **Attention engine.** Ranked, explained, snoozable, learning from you; quiet hours.
+- **Judgement that compounds.** "Request changes" turns your review feedback into **house rules** every future session
+  follows and checks itself against. The longer you use it, the less you correct.
+- **Proof of work.** Reviews arrive with what Claude says it did, its notes, the commits and files changed, and your
+  rules as a checklist.
 
 ## Building next (Q4 2026)
-- **Judgement that compounds.** "Request changes" with a reason. Focusflow distills your approvals and rejections
-  into **house rules** that every future agent follows, per project. The longer you use it, the less you correct.
-- **Proof of work.** Every review arrives with a summary, the files changed, tests run and the rules applied, so
-  approving takes seconds.
+- **Rules that write themselves.** Focusflow suggests a house rule when you send similar feedback twice, and shows
+  which rules a piece of work was checked against.
+- **Tests as evidence.** Reviews that show which checks ran and passed.
 - **A worktree per task.** Parallel work without collisions, and a clean diff to approve.
 
 ## Exploring (2027)
@@ -238,8 +247,13 @@ Several tasks can run at the same time. Each works in its own session.
 
 When Claude finishes, the task moves to **Ready for review** and appears on Home.
 
+The task page shows **proof of work**: what Claude says it did, its latest progress note, the commits and files changed
+in the project folder since the task started, and your **house rules** as a checklist.
+
 - **Approve** closes it (stage → Done) and saves what was learned. You have a few seconds to **Undo**.
-- **Not right yet?** Send a message saying what to change. The task keeps going, and your feedback is remembered.
+- **Request changes** sends it back with what to change; Claude gets straight back to work. Tick **Make this a house
+  rule** and it becomes a standard every future session in the project (or everywhere) must follow and check its work
+  against. That is how Focusflow learns your judgement: the more you review, the less you correct.
 - **Several at once?** Tasks → List, select them, **Approve**.
 ` },
   { id: 'memory', group: 'Guides', title: 'Memory', body: `# Memory: never say it twice
@@ -252,6 +266,9 @@ whole project.
 
 **How it's used:** at the start of every session, Claude is given "what you already know": things remembered for
 everywhere, for the project, and for this task. It's told not to ask them again.
+
+**House rules** are the strongest kind of memory: standards every session must follow and check its work against.
+They come from **Request changes** at review, or add them on a project's **House rules** tab.
 
 **Your controls** (Memory page, or a task's Memory tab):
 - **Remember something** directly, for this task, the whole project, or everywhere.
@@ -420,6 +437,11 @@ have a few seconds to Undo.
   { id: 'whats-new', group: 'Reference', title: 'What’s new', body: `# What's new
 
 <p class="stamp">Updated ${UPDATED}</p>
+
+### 25 September 2026 (later)
+- **Request changes** and **house rules**: review feedback becomes a standard every future session follows.
+- **Proof of work** on every review: Claude's summary, the latest note, commits and files changed, your rules.
+- Background runs that finish normally are no longer reported as failures.
 
 ### 25 September 2026
 - A completely redesigned app: sidebar, Home, board and list, task pages you can edit, projects with progress,

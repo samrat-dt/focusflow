@@ -1140,6 +1140,20 @@ focusflow remember "<decision>" --project <slug>                # the whole proj
 focusflow remember "<preference>" --global                      # everywhere
 ```
 
+**House rules.** The session context may start with a HOUSE RULES block:
+the user's standards for this project, learned from their reviews. Always
+follow them, and check your work against each one before you say the task is
+done or move it to review. When the user rejects work for a reason that is a
+general standard ("every page must work on mobile"), record it as a rule:
+
+```
+focusflow remember "<the standard, as an instruction>" --kind rule   # this project
+focusflow remember "<the standard>" --kind rule --global             # everywhere
+```
+
+A message that starts with "Changes requested:" is the user's review
+feedback: address every point, then send the task back to review.
+
 The user manages memory with `focusflow memories [--task|--project|--global]`,
 `focusflow memory pin|unpin|promote|restore <id>` and `focusflow forget <id>`.
 Memory is for decisions and preferences; durable facts about the user or org

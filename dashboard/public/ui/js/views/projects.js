@@ -147,7 +147,8 @@ export const project = {
     const poll = setInterval(() => { if (r.query.tab === 'assistant') fetchProject(p.slug, ['thread']); }, 5000);
     ctx.onCleanup(() => clearInterval(poll));
     const tab = r.query.tab ?? 'tasks';
-    const tabs = [['tasks', 'Tasks', p.total], ['assistant', 'Assistant'], ['brief', 'Brief'], ['memory', 'Memory', c.memories?.length || null]];
+    const rules = (c.memories ?? []).filter(m => m.kind === 'rule');
+    const tabs = [['tasks', 'Tasks', p.total], ['assistant', 'Assistant'], ['rules', 'House rules', rules.length || null], ['brief', 'Brief'], ['memory', 'Memory', (c.memories?.length ?? 0) - rules.length || null]];
     return h('div.page',
       h('div.crumbs', h('a', { href: '#/projects' }, 'Projects')),
       h('div.page-head',
@@ -158,8 +159,12 @@ export const project = {
           h('button.btn.icon', { type: 'button', 'aria-label': 'Project actions', on: { click: e => projectMenu(e.currentTarget, p) } }, icon('more')))),
       h('div', { style: 'max-width:520px' }, progress(p.counts, p.total)),
       h('div.tabs', { role: 'tablist' }, tabs.map(([id, label, n]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === id), on: { click: () => setQuery({ tab: id === 'tasks' ? '' : id }) } }, label, n ? h('span.badge.soft', String(n)) : null))),
-      tab === 'assistant' ? assistantTab(p, c) : tab === 'brief' ? briefTab(p, c) : tab === 'memory'
-        ? h('div', rememberForm({ project: p.slug, onDone: () => fetchProject(p.slug, ['memories']) }), c.memories?.length ? memoryList(c.memories, { onChange: () => fetchProject(p.slug, ['memories']) }) : h('div', { style: 'color:var(--muted)' }, 'Nothing remembered for this project yet. Answers you give its tasks show up here.'))
+      tab === 'assistant' ? assistantTab(p, c) : tab === 'brief' ? briefTab(p, c) : tab === 'rules'
+        ? h('div', h('div.callout.good', { style: 'margin-bottom:16px' }, icon('shield'), h('span', 'House rules are your standards for this project. Every session is told to follow them and to check its work against them. They grow from the changes you request at review.')),
+          rememberForm({ project: p.slug, kind: 'rule', onDone: () => fetchProject(p.slug, ['memories']) }),
+          rules.length ? memoryList(rules, { onChange: () => fetchProject(p.slug, ['memories']), scopeLabel: false }) : h('div', { style: 'color:var(--muted)' }, 'No house rules yet. When you request changes, tick “Make this a house rule”.'))
+        : tab === 'memory'
+        ? h('div', rememberForm({ project: p.slug, onDone: () => fetchProject(p.slug, ['memories']) }), c.memories?.filter(m => m.kind !== 'rule').length ? memoryList(c.memories.filter(m => m.kind !== 'rule'), { onChange: () => fetchProject(p.slug, ['memories']) }) : h('div', { style: 'color:var(--muted)' }, 'Nothing remembered for this project yet. Answers you give its tasks show up here.'))
         : tasksTab(p));
   },
 };

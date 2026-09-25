@@ -28,13 +28,15 @@ ff('init');
 ff('add', 'project', 'Website', '--slug', 'website', '--work-dir', dirs.work, '--priority', 'high');
 ff('add', 'project', 'Ops', '--slug', 'ops', '--work-dir', dirs.work);
 for (const [name, slug, project, pri] of [['Draft the launch note', 'launch', 'website', 'high'], ['Fix pricing table', 'pricing', 'website', 'medium'],
-  ['Rotate API keys', 'keys', 'ops', 'high'], ['Write onboarding email', 'onboard', 'website', 'low'], ['Audit backups', 'backups', 'ops', 'medium'], ['Old idea', 'idea', 'website', 'low']]) {
+  ['Rotate API keys', 'keys', 'ops', 'high'], ['Write onboarding email', 'onboard', 'website', 'low'], ['Audit backups', 'backups', 'ops', 'medium'], ['Old idea', 'idea', 'website', 'low'], ['Write the FAQ', 'faq', 'website', 'medium']]) {
   ff('add', 'task', name, '--slug', slug, '--project', project, '--priority', pri);
 }
 for (const s of ['launch', 'pricing', 'keys']) ff('next', s);
 ff('update', 'task', 'pricing', '--status', 'in-progress');
 ff('update', 'task', 'onboard', '--status', 'in-progress');
 ff('review', 'onboard');
+ff('update', 'task', 'faq', '--status', 'in-progress');
+ff('review', 'faq');
 ff('update', 'task', 'backups', '--status', 'in-progress', '--due-date', '2026-09-01');
 execFileSync(env.FOCUSFLOW_BIN, ['message', 'user', 'Should the pricing table show annual or monthly first?'], { cwd: dirs.work, env: { ...env, FOCUSFLOW_TASK: 'pricing' } });
 execFileSync(env.FOCUSFLOW_BIN, ['message', 'user', 'Blocked: need the new vault token.', '--urgent'], { cwd: dirs.work, env: { ...env, FOCUSFLOW_TASK: 'keys' } });

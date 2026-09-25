@@ -109,3 +109,48 @@ func TestFreshDatabaseIsCurrentAndAcceptsAllStatuses(t *testing.T) {
 		t.Error("IsValidStatus")
 	}
 }
+
+// A v4 database (memories without house rules) upgrades to v5 keeping every memory, and then accepts rules.
+func TestMigrateV4ToV5KeepsMemoriesAndAllowsRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v4.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Roll the fresh database back to the v4 shape.
+	for _, q := range []string{
+		`DROP TABLE memories`,
+		`CREATE TABLE memories (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('answer','instruction','decision','note')), scope TEXT NOT NULL CHECK (scope IN ('task','project','global')), task_slug TEXT, project_slug TEXT, question TEXT, body TEXT NOT NULL, source TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','forgotten')), created_at TEXT NOT NULL)`,
+		`INSERT INTO memories (id, kind, scope, project_slug, body, source, created_at) VALUES ('m1','decision','project','p','Use GBP','cli','2026-09-25T00:00:00Z')`,
+		`PRAGMA user_version = 4`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+	if v := userVersion(t, db); v != SchemaVersion {
+		t.Fatalf("user_version = %d, want %d", v, SchemaVersion)
+	}
+	got, err := ListMemories(db, MemoryFilter{})
+	if err != nil || len(got) != 1 || got[0].Body != "Use GBP" {
+		t.Fatalf("memories after migration = %+v (%v)", got, err)
+	}
+	r := &Memory{ID: "r1", Kind: "rule", Scope: "project", ProjectSlug: nullStr("p"), Body: "Always add tests", Source: "review", CreatedAt: NowISO()}
+	if err := InsertMemory(db, r); err != nil {
+		t.Fatalf("a rule must be accepted after v5: %v", err)
+	}
+	rules, _ := RulesFor(db, "p")
+	if len(rules) != 1 || rules[0].Body != "Always add tests" {
+		t.Errorf("RulesFor = %+v", rules)
+	}
+	if other, _ := RulesFor(db, "q"); len(other) != 0 {
+		t.Errorf("a project rule must not leak into another project")
+	}
+}

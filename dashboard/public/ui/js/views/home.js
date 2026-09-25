@@ -5,7 +5,7 @@ import { S, act, load, send, capture, tasksNow, pendingFor } from '../state.js';
 import { go } from '../router.js';
 import { menu, toast, oops, empty } from '../ui.js';
 import { greeting, humanTime, duration, parseQuickAdd } from '../logic.js';
-import { taskRow, projectName, displayName } from '../parts.js';
+import { taskRow, projectName, displayName, requestChanges } from '../parts.js';
 
 const KIND = {
   question: { label: 'Question for you', icon: 'message' },
@@ -63,7 +63,10 @@ function attnRow(i) {
   const t = S.tasks.find(x => x.slug === i.slug);
   const buttons = [];
   if (i.kind === 'question') buttons.push(h('button.btn.primary.sm', { type: 'button', dataset: { key: `reply:${i.slug}` }, on: { click: () => { openReply = openReply === i.slug ? null : i.slug; refresh(); } } }, 'Reply'));
-  if (i.kind === 'review' && !i.agent) buttons.push(h('button.btn.primary.sm', { type: 'button', dataset: { key: `approve:${i.slug}` }, on: { click: () => act(i.slug, 'approve') } }, icon('check'), 'Approve'));
+  if (i.kind === 'review' && !i.agent) {
+    buttons.push(h('button.btn.primary.sm', { type: 'button', dataset: { key: `approve:${i.slug}` }, on: { click: () => act(i.slug, 'approve') } }, icon('check'), 'Approve'));
+    if (t) buttons.push(h('button.btn.sm', { type: 'button', on: { click: () => requestChanges(t, { onDone: load }) } }, 'Changes…'));
+  }
   if (i.kind === 'stalled') buttons.push(h('button.btn.sm', { type: 'button', on: { click: () => act(i.slug, 'pause') } }, icon('stop'), 'Stop'));
   if (i.kind !== 'question') buttons.push(h('button.btn.sm', { type: 'button', on: { click: () => go(`/task/${i.slug}`) } }, i.kind === 'review' ? 'Look' : 'Open'));
   buttons.push(h('button.btn.ghost.sm', { type: 'button', 'aria-label': `Remind me later about ${i.name}`, on: { click: e => laterMenu(e.currentTarget, i) } }, 'Later'));
