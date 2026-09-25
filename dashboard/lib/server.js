@@ -175,8 +175,8 @@ export function createApp({
       if (prev.get(slug) !== 'running' || st === 'running') continue;
       const t = store.getTask(slug);
       if (!t || t.status === 'paused') continue; // a run the user stopped is not news
-      const failed = st === 'dead';
-      arrivals.push({ slug, name: t.name, urgent: failed, body: failed ? 'The background run stopped unexpectedly.' : t.status === 'review' ? 'Finished. Ready for your review.' : 'Claude finished working on this.' });
+      const failed = st === 'dead' || st === 'timed_out';
+      arrivals.push({ slug, name: t.name, urgent: failed, body: st === 'timed_out' ? 'Stopped at the project’s time limit.' : failed ? 'The background run stopped unexpectedly.' : t.status === 'review' ? 'Finished. Ready for your review.' : 'Claude finished working on this.' });
     }
     if (arrivals.length) { try { notifier.notify(arrivals); } catch { /* a banner is a nicety */ } }
   }
@@ -451,6 +451,14 @@ export function createApp({
     if (body.mode === 'queue') return sendQueue(slug, c.text);
 
     if (body.confirm !== true) throw new HttpError(400, 'headless runs need confirm: true');
+    // A project can turn background runs off: then the message waits for the next terminal session.
+    if (t.project) {
+      let proj = null;
+      try { proj = readProjectsFull().find(p => p.slug === t.project) ?? null; } catch { /* unknown: allowed */ }
+      if (proj && proj.runs && proj.runs.on === false) {
+        return sendQueue(slug, c.text, { downgraded: true, note: 'Background runs are off for this project, so the message will wait until you open the task in a terminal.' });
+      }
+    }
     // A live session would be answering already; do not start a second, unattended one.
     if (status.live.has(slug)) {
       return sendQueue(slug, c.text, { downgraded: true, note: 'The task is live, so the message was queued instead of starting a headless run.' });
@@ -751,6 +759,17 @@ export function createApp({
       case 'archive': if (p.archived) throw new HttpError(409, 'already archived'); args = ['archive', `project/${slug}`]; break;
       case 'unarchive': if (!p.archived) throw new HttpError(409, 'not archived'); args = ['unarchive', `project/${slug}`]; break;
       case 'unschedule': args = ['project', 'unschedule', slug]; break;
+      case 'runs': {
+        args = ['project', 'runs', slug];
+        if (body.on === true) args.push('--on'); else if (body.on === false) args.push('--off');
+        if (body.limit_minutes === null || body.limit_minutes === 0) args.push('--no-limit');
+        else if (body.limit_minutes !== undefined) {
+          if (!Number.isInteger(body.limit_minutes) || body.limit_minutes < 1 || body.limit_minutes > 1440) throw new HttpError(400, 'limit_minutes must be 1 to 1440, or null for none');
+          args.push('--limit', String(body.limit_minutes));
+        }
+        if (args.length === 3) throw new HttpError(400, 'say on, off, or a limit');
+        break;
+      }
       case 'ensure-agent': {
         if (p.archived) throw new HttpError(409, 'archived projects cannot be opened');
         return { ok: true, action: a, agent: await ensureAgent(slug) };

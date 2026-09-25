@@ -144,12 +144,16 @@ export function readTasks({
 // Every project, archived ones included, with the fields the Projects and Archive screens need.
 // `agent_task_slug` is the project's hidden coordinator task (null until it is first used).
 export function readProjectsFull({ focusRoot = defaultRoot(), dbName = defaultDbName(), busyTimeoutMs = 3000 } = {}) {
-  return withFocusDb(path.join(focusRoot, dbName), busyTimeoutMs, db =>
-    db.prepare('SELECT slug, name, status, priority, work_dir, archived_at, agent_task_slug FROM projects ORDER BY slug')
-      .all().map(r => ({
-        slug: r.slug, name: r.name, status: r.status, priority: r.priority, work_dir: r.work_dir,
-        archived: r.archived_at != null, agent_task_slug: r.agent_task_slug ?? null,
-      })));
+  return withFocusDb(path.join(focusRoot, dbName), busyTimeoutMs, db => {
+    let rows;
+    try { rows = db.prepare('SELECT slug, name, status, priority, work_dir, archived_at, agent_task_slug, auto_runs, run_limit_minutes FROM projects ORDER BY slug').all(); }
+    catch { rows = db.prepare('SELECT slug, name, status, priority, work_dir, archived_at, agent_task_slug FROM projects ORDER BY slug').all(); } // before run policies
+    return rows.map(r => ({
+      slug: r.slug, name: r.name, status: r.status, priority: r.priority, work_dir: r.work_dir,
+      archived: r.archived_at != null, agent_task_slug: r.agent_task_slug ?? null,
+      runs: { on: r.auto_runs !== 'off', limit_minutes: r.run_limit_minutes ?? null },
+    }));
+  });
 }
 
 // Scheduled coordinators (focusflow owners), for the project rows' Schedule state.

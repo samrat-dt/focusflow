@@ -30,7 +30,7 @@ export function liveNote(t) {
   const text = liveLine(t, S.runs.get(t.slug));
   if (!text) return null;
   const run = S.runs.get(t.slug);
-  const failed = t.auto_run_status === 'dead';
+  const failed = t.auto_run_status === 'dead' || t.auto_run_status === 'timed_out';
   return h('div.card-live', { style: failed ? 'color:var(--danger)' : '' }, icon(failed ? 'alert' : t.headless_running ? 'bolt' : 'terminal'),
     h('span', text + (t.headless_running && run?.elapsed_seconds != null ? ` · ${duration(run.elapsed_seconds)}` : '')));
 }

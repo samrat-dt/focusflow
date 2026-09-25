@@ -73,12 +73,12 @@ func ensureProjectAgent(db *sql.DB, root string, p *store.Project) (string, bool
 
 func cmdProject(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: project requires a subcommand (agent, message, pause, schedule, unschedule)")
+		fmt.Fprintln(os.Stderr, "error: project requires a subcommand (agent, message, pause, schedule, unschedule, runs)")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
-	case "agent", "message", "pause", "schedule", "unschedule":
+	case "agent", "message", "pause", "schedule", "unschedule", "runs":
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown project subcommand %q\n", sub)
 		return 2
@@ -123,8 +123,67 @@ func cmdProject(args []string) int {
 		return projectSchedule(db, root, p, rest[1:])
 	case "unschedule":
 		return ownerSetActive([]string{projectAgentSlug(p.Slug) + "-owner"}, false)
+	case "runs":
+		return projectRuns(db, p, rest[1:])
 	}
 	return 2
+}
+
+// projectRuns implements `project runs <slug> [--on | --off] [--limit <minutes> | --no-limit] [--json]`:
+// whether background runs may start in this project, and how long one may run before it is stopped.
+// With no flags it prints the current policy.
+func projectRuns(db *sql.DB, p *store.Project, args []string) int {
+	fs := flagSet("project runs")
+	on := fs.Bool("on", false, "allow background runs")
+	off := fs.Bool("off", false, "do not start background runs in this project")
+	limit := fs.Int("limit", 0, "stop a background run after this many minutes")
+	noLimit := fs.Bool("no-limit", false, "remove the time limit")
+	asJSON := fs.Bool("json", false, "print the policy as JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *on && *off {
+		fmt.Fprintln(os.Stderr, "error: --on and --off are opposites")
+		return 2
+	}
+	if *limit < 0 || *limit > 24*60 || (*limit > 0 && *noLimit) {
+		fmt.Fprintln(os.Stderr, "error: --limit must be 1 to 1440 minutes (or use --no-limit)")
+		return 2
+	}
+	var onPtr *bool
+	if *on || *off {
+		v := *on
+		onPtr = &v
+	}
+	var limPtr *int
+	if *limit > 0 || *noLimit {
+		v := *limit
+		limPtr = &v
+	}
+	if onPtr != nil || limPtr != nil {
+		if err := store.SetRunPolicy(db, p.Slug, onPtr, limPtr); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
+	pol, err := store.GetRunPolicy(db, p.Slug)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		return printJSON(map[string]any{"project": p.Slug, "on": pol.On, "limit_minutes": pol.LimitMinutes})
+	}
+	state := "on"
+	if !pol.On {
+		state = "off"
+	}
+	lim := "no time limit"
+	if pol.LimitMinutes > 0 {
+		lim = fmt.Sprintf("stopped after %d minutes", pol.LimitMinutes)
+	}
+	fmt.Printf("Background runs in %s: %s (%s)\n", p.Slug, state, lim)
+	return 0
 }
 
 // projectMessage implements `project message <slug> "<text>" [--fanout] [--urgent]`:

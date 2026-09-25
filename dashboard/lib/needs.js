@@ -22,6 +22,7 @@ export function buildNeeds({ tasks, messages = [], now = new Date(), rules = new
     if (t.archived || t.status === 'done') continue;
     if (isWork(t) && t.status === 'review') push(t, { kind: 'review', detail: 'Ready for your approval', at: t.status_changed_at || t.updated_at });
     if (isWork(t) && t.auto_run_status === 'dead') push(t, { kind: 'failed', detail: 'A background run stopped unexpectedly', at: t.updated_at });
+    if (isWork(t) && t.auto_run_status === 'timed_out') push(t, { kind: 'failed', detail: 'A background run was stopped at the project’s time limit', at: t.updated_at });
     if (t.auto_run_status === 'running') {
       const last = runActivity.get(t.slug);
       const quietMs = last ? now.getTime() - Date.parse(last) : NaN;

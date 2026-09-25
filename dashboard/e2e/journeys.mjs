@@ -144,6 +144,17 @@ await step('Settings saves quiet hours', async () => {
   if (s.quiet_hours !== '23:00-07:30') throw new Error(s.quiet_hours);
 });
 
+await step('A project can turn background runs off, and messages then wait', async () => {
+  await b.evaluate(`location.hash = '#/project/ops'; true`);
+  await b.until(`!!document.querySelector('[aria-label="Project actions"]')`);
+  await b.evaluate(`document.querySelector('[aria-label="Project actions"]').click(); true`);
+  await b.until(`!!document.querySelector('.menu-pop')`);
+  await b.evaluate(clickText('.menu-pop button', 'Turn background runs off'));
+  await b.until(`document.body.textContent.includes('Background runs off')`, 8000);
+  const r = await (await fetch(BASE + '/api/tasks/backups/reply', { method: 'POST', headers: { 'x-focusflow-token': TOKEN, 'content-type': 'application/json', host: new URL(BASE).host }, body: JSON.stringify({ text: 'Check last night too' }) })).json();
+  if (r.mode !== 'queue') throw new Error(JSON.stringify(r));
+});
+
 await step('The quick-capture window adds a task with shorthand', async () => {
   await b.goto(`${BASE}/?q=1#token=${TOKEN}&route=%2Fquick`);
   await b.until(`!!document.querySelector('[data-key="quick"]')`);

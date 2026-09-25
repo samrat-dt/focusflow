@@ -694,7 +694,11 @@ func fakeClaudeScript(t *testing.T, body string) string {
 // runWrapped starts a headless run whose "claude" is script, and returns the task as recorded.
 func runWrapped(t *testing.T, slug, script string) *store.Task {
 	t.Helper()
-	seedTask(t, slug)
+	if slug == "" {
+		slug = "pricing" // an existing task (from seedProjectTasks)
+	} else {
+		seedTask(t, slug)
+	}
 	orig := execCommand
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		args[2] = script // the wrapper's $0: run the fake instead of claude
@@ -778,4 +782,54 @@ func TestDo_Auto_StoppingTheRunStopsClaudeToo(t *testing.T) {
 		t.Errorf("a stopped run must not record success")
 	}
 	waitForExit(t, int64(child))
+}
+
+func TestDo_Auto_RespectsTheProjectRunPolicy(t *testing.T) {
+	setupRoot(t)
+	seedProjectTasks(t)
+	unbindSession(t)
+	captureStdout(t, func() {
+		if rc := cmdProject([]string{"runs", "web", "--off"}); rc != 0 {
+			t.Fatalf("project runs --off rc=%d", rc)
+		}
+	})
+	spawned := false
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd { spawned = true; return exec.Command("true") }
+	t.Cleanup(func() { execCommand = orig })
+	if rc := cmdDo([]string{"pricing", "--auto"}); rc != 1 {
+		t.Errorf("a background run in a project with runs off must be refused, rc=%d", rc)
+	}
+	task, _ := store.GetTask(openTestDB(t), "pricing")
+	if spawned || task.Status != "backlog" || task.SessionID.Valid {
+		t.Errorf("a refused run must change nothing: spawned=%v status=%s session=%v", spawned, task.Status, task.SessionID)
+	}
+	out := captureStdout(t, func() { cmdProject([]string{"runs", "web", "--on", "--limit", "30", "--json"}) })
+	if !strings.Contains(out, `"on": true`) || !strings.Contains(out, `"limit_minutes": 30`) {
+		t.Errorf("policy json = %s", out)
+	}
+	if rc := cmdProject([]string{"runs", "web", "--limit", "30", "--no-limit"}); rc != 2 {
+		t.Errorf("contradictory flags must be a usage error")
+	}
+}
+
+func TestDo_Auto_TimeLimitStopsTheRunAndSaysSo(t *testing.T) {
+	setupRoot(t)
+	seedProjectTasks(t)
+	unbindSession(t)
+	captureStdout(t, func() { cmdProject([]string{"runs", "web", "--limit", "1"}) })
+	origLimit := runLimitSeconds
+	runLimitSeconds = func(int) int { return 1 } // one "minute" is one second here
+	t.Cleanup(func() { runLimitSeconds = origLimit })
+	task := runWrapped(t, "", fakeClaudeScript(t, "exec sleep 30"))
+	if got := waitForFile(t, exitFileFor(task.AutoRunLog.String)); got != "timeout" {
+		t.Fatalf("exit file = %q, want timeout", got)
+	}
+	waitForExit(t, task.AutoRunPID.Int64)
+	db := openTestDB(t)
+	refreshAutoRunStatus(db, task)
+	after, _ := store.GetTask(db, "pricing")
+	if after.AutoRunStatus.String != "timed_out" {
+		t.Errorf("status = %q, want timed_out", after.AutoRunStatus.String)
+	}
 }

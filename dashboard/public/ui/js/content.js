@@ -331,6 +331,9 @@ change.
 - **How to stop it:** **Stop** on the task, on Home, or Pause the task. Pausing a project stops all of its runs.
 - **When it goes quiet:** after 15 minutes without visible progress (change in Settings) it appears on Home as
   **Might be stuck**.
+- **Per project, you decide.** Project ⋯ → **Turn background runs off** makes messages wait until you open the task
+  in a terminal. **Time limit per run** stops any run that goes on longer than 15 minutes to 2 hours; it shows on Home
+  as stopped at the time limit.
 - **If a terminal is open** for the task, messages go to that session instead: no second run starts.
 - Everything a run does is in the task's history and your git history. Nightly backups keep Focusflow's own data safe.
 ` },
@@ -447,6 +450,9 @@ have a few seconds to Undo.
   { id: 'whats-new', group: 'Reference', title: 'What’s new', body: `# What's new
 
 <p class="stamp">Updated ${UPDATED}</p>
+
+### 25 September 2026 (night)
+- Per-project control of background runs: turn them off, or set a time limit per run.
 
 ### 25 September 2026 (evening)
 - Notifications from the Focusflow app: click to open, **Reply** inline, **Approve** from the banner.

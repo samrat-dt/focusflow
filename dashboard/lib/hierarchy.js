@@ -25,7 +25,7 @@ export function buildOverview({ tasks, projects, owners = [] }) {
     const agentTask = p.agent_task_slug ? bySlug.get(p.agent_task_slug) : null;
     const owner = owners.find(o => o.project === p.slug && o.status !== 'retired') ?? null;
     rows.push({
-      slug: p.slug, name: p.name, priority: p.priority, work_dir: p.work_dir, counts, total: own.length,
+      slug: p.slug, name: p.name, priority: p.priority, work_dir: p.work_dir, counts, total: own.length, runs: p.runs ?? { on: true, limit_minutes: null },
       agent: agentTask
         ? { slug: agentTask.slug, has_session: !!agentTask.has_session, live: !!agentTask.live, terminal_open: !!agentTask.terminal_open, headless_running: !!agentTask.headless_running }
         : null,

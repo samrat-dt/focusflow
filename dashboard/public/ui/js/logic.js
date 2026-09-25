@@ -132,6 +132,7 @@ export function primaryAction(t) {
 export function liveLine(t, run) {
   if (t.headless_running) return run?.activity?.summary ? `Working: ${run.activity.summary}` : 'Working in the background';
   if (t.auto_run_status === 'dead') return 'The background run stopped unexpectedly';
+  if (t.auto_run_status === 'timed_out') return 'Stopped at the project’s time limit';
   if (t.terminal_open) return t.working ? 'Working in a terminal' : 'Open in a terminal';
   return null;
 }

@@ -124,6 +124,15 @@ function projectMenu(anchor, p) {
     { label: 'Rename', icon: 'edit', run: async () => { const v = await askText({ title: 'Rename project', label: 'Name', value: p.name }); if (v && v.trim() && v.trim() !== p.name) { try { await edit('projects', p.slug, { name: v.trim() }); toast('Renamed.'); } catch (err) { oops(err); } } } },
     { header: 'Priority' },
     ...['high', 'medium', 'low'].map(v => ({ label: v[0].toUpperCase() + v.slice(1), run: async () => { try { await edit('projects', p.slug, { priority: v }); toast('Priority updated.'); } catch (err) { oops(err); } } })),
+    { header: `Background runs: ${p.runs?.on === false ? 'off' : 'on'}${p.runs?.limit_minutes ? ` · stop after ${p.runs.limit_minutes} min` : ''}` },
+    p.runs?.on === false
+      ? { label: 'Allow background runs', icon: 'bolt', run: () => projectAct(p.slug, 'runs', { on: true }) }
+      : { label: 'Turn background runs off', icon: 'stop', run: () => projectAct(p.slug, 'runs', { on: false }) },
+    { label: 'Time limit per run…', icon: 'clock', run: () => setTimeout(() => menu(anchor, [
+      { header: 'Stop a background run after' },
+      ...[15, 30, 60, 120].map(m => ({ label: m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`, run: () => projectAct(p.slug, 'runs', { limit_minutes: m }) })),
+      { label: 'No limit', run: () => projectAct(p.slug, 'runs', { limit_minutes: null }) },
+    ]), 0) },
     { header: 'Check-ins' },
     ...(p.schedule ? [{ label: 'Stop scheduled check-ins', icon: 'x', run: () => projectAct(p.slug, 'unschedule') }]
       : ['12h', '1d', '3d', '1w'].map(v => ({ label: `Assistant checks in every ${v}`, icon: 'clock', run: () => projectAct(p.slug, 'schedule', { every: v }) }))),
@@ -152,7 +161,9 @@ export const project = {
     return h('div.page',
       h('div.crumbs', h('a', { href: '#/projects' }, 'Projects')),
       h('div.page-head',
-        h('div.grow', h('h1', p.name), h('div.sub', { style: 'font-size:15px' }, nextStep(p), p.work_dir && h('div', { style: 'font-size:12px;color:var(--faint);margin-top:4px;font-family:var(--mono)', title: 'Claude works in this folder' }, p.work_dir.replace(/^\/Users\/[^/]+/, '~')))),
+        h('div.grow', h('h1', p.name), h('div.sub', { style: 'font-size:15px' }, nextStep(p),
+          p.runs?.on === false ? h('span.tag.warn', { style: 'margin-left:8px', title: 'Messages wait until you open a task in a terminal' }, 'Background runs off')
+            : p.runs?.limit_minutes ? h('span.tag', { style: 'margin-left:8px' }, `Runs stop after ${p.runs.limit_minutes} min`) : null, p.work_dir && h('div', { style: 'font-size:12px;color:var(--faint);margin-top:4px;font-family:var(--mono)', title: 'Claude works in this folder' }, p.work_dir.replace(/^\/Users\/[^/]+/, '~')))),
         h('div.actions',
           h('button.btn', { type: 'button', on: { click: () => setQuery({ tab: 'assistant' }) } }, icon('sparkle'), 'Ask the project'),
           h('button.btn.primary', { type: 'button', on: { click: () => dispatchEvent(new CustomEvent('ff:new-task', { detail: { project: p.slug } })) } }, icon('plus'), 'New task'),

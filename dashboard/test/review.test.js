@@ -102,3 +102,30 @@ test('while the Mac app is polling, the server does not send its own banners', a
   h.app.refresh();
   assert.equal(sent.length, 0, 'the app shows it natively instead');
 });
+
+test('project runs: on, off and a time limit become focusflow flags; nonsense is refused', async () => {
+  h = await makeApp({ live: [], projectsFull: [{ slug: 'web', name: 'Web', runs: { on: true, limit_minutes: null } }] });
+  const act = body => h.post('/api/projects/web/action', { action: 'runs', ...body });
+  assert.equal((await act({ on: false })).status, 200);
+  assert.equal((await act({ limit_minutes: 30 })).status, 200);
+  assert.equal((await act({ limit_minutes: null })).status, 200);
+  assert.equal((await act({ limit_minutes: 5000 })).status, 400);
+  assert.equal((await act({})).status, 400);
+  assert.deepEqual(h.calls.map(c => c.args).filter(a => a[0] === 'project'), [
+    ['project', 'runs', 'web', '--off'], ['project', 'runs', 'web', '--limit', '30'], ['project', 'runs', 'web', '--no-limit'],
+  ]);
+});
+
+test('with background runs off, a message waits for the terminal instead of starting a run', async () => {
+  h = await makeApp({ live: [], tasks: [T('t', 'in-progress', { project: 'web' })], projectsFull: [{ slug: 'web', name: 'Web', runs: { on: false, limit_minutes: null } }], focusflow: fakeFocus() });
+  const r = (await h.post('/api/tasks/t/reply', { text: 'Carry on' })).json();
+  assert.equal(r.mode, 'queue');
+  assert.match(r.note, /Background runs are off/);
+  assert.ok(!h.calls.some(c => c.args[0] === 'do'), 'no run started');
+});
+
+test('a run stopped at its time limit shows on Home as a stopped run, not a mystery', async () => {
+  const { buildNeeds } = await import('../lib/needs.js');
+  const n = buildNeeds({ tasks: [{ ...T('slow', 'in-progress', { auto_run_status: 'timed_out' }), signals: {} }], now: new Date() });
+  assert.deepEqual(n.items.map(i => [i.kind, i.detail]), [['failed', 'A background run was stopped at the project’s time limit']]);
+});

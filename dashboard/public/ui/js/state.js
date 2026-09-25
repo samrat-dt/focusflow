@@ -49,7 +49,7 @@ export function load() {
         api('/api/tasks'), api('/api/needs-you'), api('/api/inbox'), api('/api/projects/overview'), api('/api/projects'),
       ]);
       S.tasks = t.tasks; S.needs = n; S.inbox = i; S.overview = o; S.projectList = p.projects; S.defaultDir = p.default_work_dir || '';
-      const running = S.tasks.filter(x => x.headless_running || x.auto_run_status === 'dead');
+      const running = S.tasks.filter(x => x.headless_running || x.auto_run_status === 'dead' || x.auto_run_status === 'timed_out');
       const runs = await Promise.all(running.map(x => api(`/api/tasks/${encodeURIComponent(x.slug)}/run`).then(r => [x.slug, r]).catch(() => null)));
       S.runs = new Map(runs.filter(Boolean));
       S.loaded = true; S.error = null;

@@ -103,12 +103,12 @@ function reviewPanel(t, c) {
 let showLog = false;
 function runPanel(t, c) {
   const r = c.run;
-  if (!t.headless_running && t.auto_run_status !== 'dead') return null;
-  const failed = t.auto_run_status === 'dead';
+  if (!t.headless_running && t.auto_run_status !== 'dead' && t.auto_run_status !== 'timed_out') return null;
+  const failed = t.auto_run_status === 'dead' || t.auto_run_status === 'timed_out';
   return h('div.callout.run', { class: failed ? 'failed' : '', style: 'margin:8px 0 0' },
     icon(failed ? 'alert' : 'bolt'),
     h('div.grow',
-      h('strong', failed ? 'The background run stopped unexpectedly' : `Claude is working on this in the background${r?.elapsed_seconds != null ? ` · ${duration(r.elapsed_seconds)}` : ''}`),
+      h('strong', t.auto_run_status === 'timed_out' ? 'The background run was stopped at the project’s time limit' : failed ? 'The background run stopped unexpectedly' : `Claude is working on this in the background${r?.elapsed_seconds != null ? ` · ${duration(r.elapsed_seconds)}` : ''}`),
       h('div', { style: 'margin-top:4px' }, r?.activity ? `${failed ? 'Last step' : 'Now'}: ${r.activity.summary}` : failed ? 'Send a message to try again, or open it in a terminal to see what happened.' : 'Getting started…'),
       r?.log_tail && h('div', { style: 'margin-top:6px' }, h('button.btn.ghost.sm', { type: 'button', on: { click: () => { showLog = !showLog; notify(); } } }, showLog ? 'Hide log' : 'Show log'), showLog && h('pre', r.log_tail))),
     !failed && h('button.btn.sm', { type: 'button', on: { click: () => act(t.slug, 'pause') } }, icon('stop'), 'Stop'));
@@ -148,7 +148,7 @@ function conversation(t, c) {
     ])) : h('div', { style: 'color:var(--muted);padding:8px 0' }, closed ? 'No messages.' : 'No messages yet. Tell Claude what you want done. Everything you say here is remembered for this task.'),
     receipt && h('div.msg-meta', { style: 'text-align:right;margin-top:6px' }, receipt),
     !closed && h('div.composer', ta, h('div.composer-foot',
-      h('span.hint', background ? 'Claude will work on this in the background. No terminal opens.' : th?.live ? 'Goes to the session that is open in your terminal.' : 'Delivered the next time this task runs.'),
+      h('span.hint', background && S.overview.projects.find(p => p.slug === t.project)?.runs?.on === false ? 'Background runs are off for this project: this waits until you open the task in a terminal.' : background ? 'Claude will work on this in the background. No terminal opens.' : th?.live ? 'Goes to the session that is open in your terminal.' : 'Delivered the next time this task runs.'),
       count, sendBtn)),
     closed && h('div.callout', { style: 'margin-top:16px' }, icon('info'), h('span', t.archived ? 'This task is archived. Restore it to continue.' : 'This task is done. Reopen it to continue the conversation.')));
 }

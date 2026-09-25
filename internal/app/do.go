@@ -119,6 +119,21 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
+	// A project can turn background runs off; refuse before anything changes.
+	var runPolicy store.RunPolicy
+	if *auto {
+		pol, err := store.GetRunPolicy(db, task.ProjectSlug.String)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if !pol.On {
+			fmt.Fprintf(os.Stderr, "error: background runs are turned off for project %s; open the task in a terminal instead (focusflow do %s)\n", task.ProjectSlug.String, task.Slug)
+			return 1
+		}
+		runPolicy = pol
+	}
+
 	// Live-session guard: a second tab on a session
 	// that's already being served would fork the transcript, so refuse
 	// unless --force says the user really means it.
@@ -238,7 +253,7 @@ func cmdDo(args []string) int {
 	}
 
 	if *auto {
-		return spawnHeadless(db, task, sessionID, needsBootstrap, extraClaudeArgs, withText)
+		return spawnHeadless(db, task, sessionID, needsBootstrap, extraClaudeArgs, withText, runPolicy.LimitMinutes)
 	}
 
 	if *fresh && curSessionID.Valid {
@@ -541,7 +556,7 @@ func doHere(db *sql.DB, task *store.Task, force bool) int {
 // (per the focusflow skill's autonomous-mode contract) — spawnHeadless does
 // not wait for that; it only tracks whether the pid is still alive via
 // refreshAutoRunStatus, called lazily from list/show.
-func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstrap bool, extraArgs []string, withText string) int {
+func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstrap bool, extraArgs []string, withText string, limitMinutes int) int {
 	root, err := dataRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -590,7 +605,10 @@ func spawnHeadless(db *sql.DB, task *store.Task, sessionID string, needsBootstra
 	cmd.Dir = task.WorkDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.Env = append(os.Environ(), "FOCUSFLOW_TASK="+task.Slug, "FOCUSFLOW_EXIT_FILE="+exitFileFor(logPath))
+	cmd.Env = append(envWithout(os.Environ(), "FOCUSFLOW_RUN_LIMIT"), "FOCUSFLOW_TASK="+task.Slug, "FOCUSFLOW_EXIT_FILE="+exitFileFor(logPath))
+	if limitMinutes > 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("FOCUSFLOW_RUN_LIMIT=%d", runLimitSeconds(limitMinutes)))
+	}
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		fmt.Fprintf(os.Stderr, "error: start headless claude: %v\n", err)
@@ -638,21 +656,41 @@ func refreshAutoRunStatus(db *sql.DB, task *store.Task) error {
 
 // headlessWrapper runs "$0" "$@" (claude and its arguments) and writes its exit status to
 // $FOCUSFLOW_EXIT_FILE when it ends. Signals sent to the wrapper are passed on to claude.
+// With $FOCUSFLOW_RUN_LIMIT (seconds) set, claude is stopped when the limit passes and the exit file
+// says "timeout" instead of a status.
 const headlessWrapper = `"$0" "$@" & c=$!
 trap 'kill -TERM "$c" 2>/dev/null' TERM INT HUP
+if [ -n "$FOCUSFLOW_RUN_LIMIT" ]; then (sleep "$FOCUSFLOW_RUN_LIMIT"; : > "$FOCUSFLOW_EXIT_FILE.limit"; kill -TERM "$c" 2>/dev/null) & w=$!; fi
 wait "$c"; s=$?
 while kill -0 "$c" 2>/dev/null; do wait "$c"; s=$?; done
-echo "$s" > "$FOCUSFLOW_EXIT_FILE"
+[ -n "$w" ] && kill "$w" 2>/dev/null
+if [ -f "$FOCUSFLOW_EXIT_FILE.limit" ]; then rm -f "$FOCUSFLOW_EXIT_FILE.limit"; echo timeout > "$FOCUSFLOW_EXIT_FILE"; else echo "$s" > "$FOCUSFLOW_EXIT_FILE"; fi
 exit "$s"`
 
 func exitFileFor(logPath string) string { return logPath + ".exit" }
 
+// runLimitSeconds turns a project's limit into the wrapper's seconds; tests shrink it.
+var runLimitSeconds = func(minutes int) int { return minutes * 60 }
+
+func envWithout(env []string, key string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, key+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // runExitCode reads the exit status the wrapper recorded, or -1 when there is none (the run was
-// killed too hard to record it, or predates the wrapper).
+// killed too hard to record it, or predates the wrapper), or -2 when the time limit stopped it.
 func runExitCode(logPath string) int {
 	b, err := os.ReadFile(exitFileFor(logPath))
 	if err != nil {
 		return -1
+	}
+	if strings.TrimSpace(string(b)) == "timeout" {
+		return -2
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
@@ -662,15 +700,24 @@ func runExitCode(logPath string) int {
 }
 
 func markAutoRunEnded(db *sql.DB, task *store.Task) error {
-	if task.AutoRunLog.Valid && runExitCode(task.AutoRunLog.String) == 0 {
-		now := store.NowISO()
-		_, err := db.Exec(
-			`UPDATE tasks SET auto_run_status='finished', auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
-			now, now, task.Slug,
-		)
-		return err
+	status := ""
+	if task.AutoRunLog.Valid {
+		switch runExitCode(task.AutoRunLog.String) {
+		case 0:
+			status = "finished"
+		case -2:
+			status = "timed_out"
+		}
 	}
-	return markAutoRunDead(db, task.Slug)
+	if status == "" {
+		return markAutoRunDead(db, task.Slug)
+	}
+	now := store.NowISO()
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, updated_at=? WHERE slug=? AND auto_run_status='running'`,
+		status, now, now, task.Slug,
+	)
+	return err
 }
 
 func markAutoRunDead(db *sql.DB, slug string) error {
